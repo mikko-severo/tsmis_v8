@@ -7,23 +7,24 @@ Version 1.0
 - [x] Project structure setup
 - [x] Core architecture documentation
 - [ ] Core components implementation
-  - [ ] Container system
+  - [x] Container and Registry system
   - [ ] Module system
   - [ ] Event system
-  - [ ] Database integration
-  - [ ] Universal Error system
+
+  - [x] Universal Error system
 - [ ] Basic security implementation
 - [ ] Testing infrastructure
 
-### Phase 2: Basic Modules (Next)
+### Phase 2: Basic services(Next)
 - [ ] User management system
+- [ ] Database integration
 - [ ] Authentication & authorization
 - [ ] Basic inventory module
 - [ ] File management system
 - [ ] Logging & monitoring
 - [ ] Development tools & utilities
 
-### Phase 3: Advanced Features
+### Phase 3: Example Modules 
 - [ ] Advanced inventory features
 - [ ] HR system integration
 - [ ] Scheduling system

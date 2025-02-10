@@ -60,7 +60,7 @@ graph TB
         Cache[Cache Manager]
     end
     
-    subgraph Service Layer
+    subgraph module Layer
         ACC[Accounting]
         HR[HR System]
         INV[Inventory]

@@ -68,11 +68,11 @@ VS Code + Extensions
 - [x] Project structure
 - [x] Core architecture
 - [ ] Basic components
-  - [ ] Container system
+  - [x] Container and Registry system
   - [ ] Module system
   - [ ] Event system
-  - [ ] Error system
-  - [ ] Database integration
+  - [x] Universal Error system
+  
 
 ### Phase 2: Core Services
 - [ ] Authentication and Authorization system/framework
@@ -80,6 +80,7 @@ VS Code + Extensions
 - [ ] Email system/framewok
 - [ ] Basic UI components
 - [ ] Development tools
+- [ ] Database integration
 
 ### Phase 3: Base Modules
 - [ ] User management
