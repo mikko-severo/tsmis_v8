@@ -8,6 +8,41 @@
 └─ .
    ├─ .env
    ├─ babel.config.js
+   ├─ coverage
+   │  ├─ clover.xml
+   │  ├─ coverage-final.json
+   │  ├─ lcov-report
+   │  │  ├─ base.css
+   │  │  ├─ block-navigation.js
+   │  │  ├─ errors
+   │  │  │  ├─ Error.js.html
+   │  │  │  ├─ index.html
+   │  │  │  ├─ index.js.html
+   │  │  │  ├─ integrations
+   │  │  │  │  ├─ IFrameworkIntegration.js.html
+   │  │  │  │  ├─ fastify
+   │  │  │  │  │  ├─ FastifyIntegration.js.html
+   │  │  │  │  │  ├─ handler.js.html
+   │  │  │  │  │  ├─ index.html
+   │  │  │  │  │  └─ serializer.js.html
+   │  │  │  │  └─ index.html
+   │  │  │  └─ types
+   │  │  │     ├─ AccessError.js.html
+   │  │  │     ├─ AuthError.js.html
+   │  │  │     ├─ ConfigError.js.html
+   │  │  │     ├─ ModuleError.js.html
+   │  │  │     ├─ NetworkError.js.html
+   │  │  │     ├─ ServiceError.js.html
+   │  │  │     ├─ ValidationError.js.html
+   │  │  │     ├─ index.html
+   │  │  │     └─ index.js.html
+   │  │  ├─ favicon.png
+   │  │  ├─ index.html
+   │  │  ├─ prettify.css
+   │  │  ├─ prettify.js
+   │  │  ├─ sort-arrow-sprite.png
+   │  │  └─ sorter.js
+   │  └─ lcov.info
    ├─ dev
    │  ├─ current_code.txt
    │  ├─ docs
@@ -23,11 +58,19 @@
    ├─ package.json
    ├─ server.js
    ├─ src
+   │  ├─ app.js
    │  ├─ config
    │  ├─ core
    │  │  ├─ errors
    │  │  │  ├─ Error.js
    │  │  │  ├─ index.js
+   │  │  │  ├─ integrations
+   │  │  │  │  ├─ IFrameworkIntegration.js
+   │  │  │  │  └─ fastify
+   │  │  │  │     ├─ FastifyIntegration.js
+   │  │  │  │     ├─ handler.js
+   │  │  │  │     ├─ index.js
+   │  │  │  │     └─ serializer.js
    │  │  │  └─ types
    │  │  │     ├─ AccessError.js
    │  │  │     ├─ AuthError.js
@@ -53,6 +96,12 @@
    │  │  └─ errors
    │  │     ├─ Error.test.js
    │  │     ├─ integration.test.js
+   │  │     ├─ integrations
+   │  │     │  ├─ IFrameworkIntegration.test.js
+   │  │     │  └─ fastify
+   │  │     │     ├─ FastifyIntegration.test.js
+   │  │     │     ├─ handler.test.js
+   │  │     │     └─ serializer.test.js
    │  │     └─ types
    │  │        ├─ ErrorTypes.test.js
    │  │        └─ index.test.js
@@ -61,6 +110,24 @@
 
 ```
 */
+
+
+// src/app.js
+
+import { setupErrorHandler, errorSerializer } from './core/errors/integrations/fastify/index.js';
+
+// In your Fastify setup
+const fastify = Fastify({
+  logger: {
+    level: process.env.LOG_LEVEL || 'info',
+    serializers: {
+      error: errorSerializer.serializer
+    }
+  }
+});
+
+// Setup error handling
+setupErrorHandler(fastify);
 
 
 // src/core/errors/Error.js
@@ -250,27 +317,35 @@ export class CoreError extends Error {
 
 // src/core/errors/index.js
 
+// src/core/errors/index.js
+
 import { CoreError } from './Error.js';
-import {
-  AccessError,
-  AuthError,
-  ConfigError,
-  ModuleError,
-  NetworkError,
-  ServiceError,
-  ValidationError
+import { ErrorTypes as TypedErrors, 
+    AccessError,
+    AuthError,
+    ConfigError,
+    ModuleError,
+    NetworkError,
+    ServiceError,
+    ValidationError
 } from './types/index.js';
 
-// Export all error classes
+// Create complete ErrorTypes including CoreError
+export const ErrorTypes = {
+    CoreError,
+    ...TypedErrors
+};
+
+// Export individual error classes
 export {
-  CoreError,
-  AccessError,
-  AuthError,
-  ConfigError,
-  ModuleError,
-  NetworkError,
-  ServiceError,
-  ValidationError
+    CoreError,
+    AccessError,
+    AuthError,
+    ConfigError,
+    ModuleError,
+    NetworkError,
+    ServiceError,
+    ValidationError
 };
 
 /**
@@ -311,14 +386,16 @@ export const ErrorCodes = {
   VALIDATION: {
     SCHEMA: 'SCHEMA_VALIDATION_FAILED',
     TYPE: 'INVALID_TYPE',
-    REQUIRED: 'REQUIRED_FIELD_MISSING'
+    REQUIRED: 'REQUIRED_FIELD_MISSING',
+    FAILED: 'VALIDATION_FAILED'  // Added for validation errors
   },
 
   // Network related
   NETWORK: {
     REQUEST: 'REQUEST_FAILED',
     RESPONSE: 'RESPONSE_ERROR',
-    TIMEOUT: 'REQUEST_TIMEOUT'
+    TIMEOUT: 'REQUEST_TIMEOUT',
+    ROUTE_NOT_FOUND: 'ROUTE_NOT_FOUND'  // Added for 404 errors
   },
 
   // Authentication related
@@ -336,37 +413,301 @@ export const ErrorCodes = {
   }
 };
 
-/**
- * Create error instance from error response data
- * @param {Object} response - Error response data
- * @param {string} [defaultMessage] - Default error message
- * @returns {CoreError} Error instance
- */
 export function createErrorFromResponse(response, defaultMessage = 'Unknown error occurred') {
   const errorData = response.data || response;
   
-  // Map error names to constructors
-  const errorTypes = {
-    AccessError,
-    AuthError,
-    ConfigError,
-    ModuleError,
-    NetworkError,
-    ServiceError,
-    ValidationError,
-    CoreError
-  };
-
-  // Get appropriate error constructor
-  const ErrorConstructor = errorTypes[errorData.name] || CoreError;
+  // Map error names to constructors from ErrorTypes
+  const ErrorConstructor = ErrorTypes[errorData.name] || CoreError;
 
   return new ErrorConstructor(
-    errorData.code || ErrorCodes.CORE.UNKNOWN,
-    errorData.message || defaultMessage,
-    errorData.details || {},
-    { cause: response }
+      errorData.code || ErrorCodes.CORE.UNKNOWN,
+      errorData.message || defaultMessage,
+      errorData.details || {},
+      { cause: response }
   );
 }
+
+export default ErrorTypes;
+
+
+// src/core/errors/integrations/IFrameworkIntegration.js
+
+// src/core/errors/integrations/IFrameworkIntegration.js
+
+/**
+ * Interface for framework error integration
+ * @interface
+ */
+export class IFrameworkIntegration {
+  /**
+   * Initialize error handling for framework
+   * @param {any} framework - Framework instance
+   * @param {Object} options - Integration options
+   */
+  initialize(framework, options = {}) {
+    throw new Error('initialize() must be implemented');
+  }
+
+  /**
+   * Serialize error for framework response
+   * @param {Error} error - Error to serialize
+   * @returns {Object} Serialized error
+   */
+  serializeError(error) {
+    throw new Error('serializeError() must be implemented');
+  }
+
+  /**
+   * Map framework error to core error
+   * @param {Error} frameworkError - Framework-specific error
+   * @returns {CoreError} Mapped core error
+   */
+  mapError(frameworkError) {
+    throw new Error('mapError() must be implemented');
+  }
+}
+
+
+// src/core/errors/integrations/fastify/FastifyIntegration.js
+
+// src/core/errors/integrations/fastify/FastifyIntegration.js
+
+import { IFrameworkIntegration } from '../IFrameworkIntegration.js';
+import { CoreError, ErrorCodes } from '../../index.js';
+import { ValidationError, NetworkError } from '../../types/index.js';
+
+export class FastifyIntegration extends IFrameworkIntegration {
+  constructor() {
+    super();
+    this.initialized = false;
+  }
+
+  async initialize(fastify, options = {}) {
+    if (this.initialized) {
+      return;
+    }
+
+    // Add error context to request
+    fastify.addHook('onRequest', async (request) => {
+      request.errorContext = {
+        url: request.url,
+        method: request.method,
+        id: request.id
+      };
+    });
+
+    // Set error handler
+    fastify.setErrorHandler(async (error, request, reply) => {
+      const errorContext = {
+        requestId: request.id,
+        timestamp: new Date().toISOString(),
+        url: request.url,
+        method: request.method
+      };
+
+      const mappedError = this.mapError(error);
+      const serializedError = this.serializeError(mappedError, errorContext);
+
+      reply.status(mappedError.statusCode || 500);
+      return reply.send(serializedError);
+    });
+
+    this.initialized = true;
+  }
+
+  mapError(error) {
+    // Already our custom error
+    if (error instanceof CoreError) {
+      return error;
+    }
+
+    // Fastify validation errors
+    if (error.validation) {
+      const validationError = new ValidationError(
+        'FAILED', // Remove prefix as ValidationError adds it
+        'Request validation failed',
+        {
+          validationErrors: error.validation
+        }
+      );
+      validationError.statusCode = error.statusCode || 400;
+      return validationError;
+    }
+
+    // Route not found
+    if (error.statusCode === 404) {
+      const notFoundError = new NetworkError(
+        'ROUTE_NOT_FOUND',
+        `Route ${error.method}:${error.url} not found`
+      );
+      notFoundError.statusCode = 404;
+      return notFoundError;
+    }
+
+    // Generic error
+    const genericError = new CoreError(
+      ErrorCodes.CORE.UNKNOWN,
+      'An unexpected error occurred',
+      {
+        originalError: process.env.NODE_ENV === 'development' ? error : undefined
+      }
+    );
+
+    genericError.statusCode = error.statusCode || 500;
+    return genericError;
+  }
+
+  serializeError(error, context = {}) {
+    const safeContext = context || {};
+
+    if (error instanceof CoreError) {
+      const serialized = error.toJSON();
+      return {
+        ...serialized,
+        context: safeContext
+      };
+    }
+
+    return {
+      code: ErrorCodes.CORE.UNKNOWN,
+      message: error.message,
+      timestamp: new Date().toISOString(),
+      context: safeContext
+    };
+  }
+}
+
+
+// src/core/errors/integrations/fastify/handler.js
+
+import { IFrameworkIntegration } from '../IFrameworkIntegration.js';
+import { CoreError, ErrorCodes } from '../../index.js';
+import { ValidationError, NetworkError } from '../../types/index.js';
+
+class FastifyErrorHandler extends IFrameworkIntegration {
+  constructor() {
+    super();
+    this.initialized = false;
+  }
+
+  initialize(fastify, options = {}) {
+    if (this.initialized) {
+      return this; // Return instance for chaining
+    }
+
+    fastify.addHook('onRequest', async (request) => {
+      request.errorContext = {
+        url: request.url,
+        method: request.method,
+        id: request.id
+      };
+    });
+
+    fastify.setErrorHandler(async (error, request, reply) => {
+      const errorContext = {
+        requestId: request.id,
+        timestamp: new Date().toISOString(),
+        url: request.url,
+        method: request.method
+      };
+
+      const mappedError = this.mapError(error);
+      const serializedError = this.serializeError(mappedError, errorContext);
+
+      reply.status(mappedError.statusCode || 500);
+      return reply.send(serializedError);
+    });
+
+    this.initialized = true;
+    return this;
+  }
+
+  mapError(error) {
+    // Already our custom error
+    if (error instanceof CoreError) {
+      return error;
+    }
+
+    // Fastify validation errors
+    if (error.validation) {
+      // Use VALIDATION.FAILED directly from ErrorCodes without prefix
+      const validationError = new ValidationError(
+        'FAILED', // Remove VALIDATION_ prefix since ValidationError adds it
+        'Request validation failed',
+        {
+          validationErrors: error.validation
+        }
+      );
+      validationError.statusCode = error.statusCode || 400;
+      return validationError;
+    }
+
+    // Route not found
+    if (error.statusCode === 404) {
+      const notFoundError = new NetworkError(
+        'ROUTE_NOT_FOUND', // Remove NETWORK_ prefix since NetworkError adds it
+        `Route ${error.method}:${error.url} not found`
+      );
+      notFoundError.statusCode = 404;
+      return notFoundError;
+    }
+
+    // Generic error
+    const genericError = new CoreError(
+      ErrorCodes.CORE.UNKNOWN,
+      'An unexpected error occurred',
+      {
+        originalError: process.env.NODE_ENV === 'development' ? error : undefined
+      }
+    );
+
+    genericError.statusCode = error.statusCode || 500;
+    return genericError;
+  }
+
+  serializeError(error, context = {}) {
+    const safeContext = context || {};
+
+    if (error instanceof CoreError) {
+      const serialized = error.toJSON();
+      return {
+        ...serialized,
+        context: safeContext
+      };
+    }
+
+    return {
+      code: ErrorCodes.CORE.UNKNOWN,
+      message: error.message,
+      timestamp: new Date().toISOString(),
+      context: safeContext
+    };
+  }
+}
+
+// Create singleton instance
+const fastifyErrorHandler = new FastifyErrorHandler();
+
+export function setupErrorHandler(fastify, options = {}) {
+  return fastifyErrorHandler.initialize(fastify, options);
+}
+
+export { fastifyErrorHandler };
+
+
+// src/core/errors/integrations/fastify/index.js
+
+export { setupErrorHandler } from './handler.js';
+export { errorSerializer } from './serializer.js';
+
+
+// src/core/errors/integrations/fastify/serializer.js
+
+import { fastifyErrorHandler } from './handler.js';
+
+export const errorSerializer = {
+  serializer: (error) => fastifyErrorHandler.serializeError(error)
+};
 
 
 // src/core/errors/types/AccessError.js
@@ -553,13 +894,41 @@ export class ValidationError extends CoreError {
 
 // src/core/errors/types/index.js
 
-export { AccessError } from './AccessError.js';
-export { AuthError } from './AuthError.js';
-export { ConfigError } from './ConfigError.js';
-export { ModuleError } from './ModuleError.js';
-export { NetworkError } from './NetworkError.js';
-export { ServiceError } from './ServiceError.js';
-export { ValidationError } from './ValidationError.js';
+// src/core/errors/types/index.js
+
+import { AccessError } from './AccessError.js';
+import { AuthError } from './AuthError.js';
+import { ConfigError } from './ConfigError.js';
+import { ModuleError } from './ModuleError.js';
+import { NetworkError } from './NetworkError.js';
+import { ServiceError } from './ServiceError.js';
+import { ValidationError } from './ValidationError.js';
+
+// Export individual error types
+export {
+    AccessError,
+    AuthError,
+    ConfigError,
+    ModuleError,
+    NetworkError,
+    ServiceError,
+    ValidationError
+};
+
+// Create the ErrorTypes namespace
+const ErrorTypes = {
+    AccessError,
+    AuthError,
+    ConfigError,
+    ModuleError,
+    NetworkError,
+    ServiceError,
+    ValidationError
+};
+
+// Export ErrorTypes as both named and default export
+export { ErrorTypes };
+export default ErrorTypes;
 
 
 // server.js

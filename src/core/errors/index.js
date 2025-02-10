@@ -1,3 +1,5 @@
+// src/core/errors/index.js
+
 import { CoreError } from './Error.js';
 import { ErrorTypes as TypedErrors, 
     AccessError,
@@ -26,7 +28,6 @@ export {
     ServiceError,
     ValidationError
 };
-
 
 /**
  * Standard error codes
@@ -66,14 +67,16 @@ export const ErrorCodes = {
   VALIDATION: {
     SCHEMA: 'SCHEMA_VALIDATION_FAILED',
     TYPE: 'INVALID_TYPE',
-    REQUIRED: 'REQUIRED_FIELD_MISSING'
+    REQUIRED: 'REQUIRED_FIELD_MISSING',
+    FAILED: 'VALIDATION_FAILED'  // Added for validation errors
   },
 
   // Network related
   NETWORK: {
     REQUEST: 'REQUEST_FAILED',
     RESPONSE: 'RESPONSE_ERROR',
-    TIMEOUT: 'REQUEST_TIMEOUT'
+    TIMEOUT: 'REQUEST_TIMEOUT',
+    ROUTE_NOT_FOUND: 'ROUTE_NOT_FOUND'  // Added for 404 errors
   },
 
   // Authentication related
@@ -91,37 +94,6 @@ export const ErrorCodes = {
   }
 };
 
-/**
- * Create error instance from error response data
- * @param {Object} response - Error response data
- * @param {string} [defaultMessage] - Default error message
- * @returns {CoreError} Error instance
- */
-// export function createErrorFromResponse(response, defaultMessage = 'Unknown error occurred') {
-//   const errorData = response.data || response;
-  
-//   // Map error names to constructors
-//   const errorTypes = {
-//     AccessError,
-//     AuthError,
-//     ConfigError,
-//     ModuleError,
-//     NetworkError,
-//     ServiceError,
-//     ValidationError,
-//     CoreError
-//   };
-
-//   // Get appropriate error constructor
-//   const ErrorConstructor = errorTypes[errorData.name] || CoreError;
-
-//   return new ErrorConstructor(
-//     errorData.code || ErrorCodes.CORE.UNKNOWN,
-//     errorData.message || defaultMessage,
-//     errorData.details || {},
-//     { cause: response }
-//   );
-// }
 export function createErrorFromResponse(response, defaultMessage = 'Unknown error occurred') {
   const errorData = response.data || response;
   
