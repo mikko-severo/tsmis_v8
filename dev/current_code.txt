@@ -17,12 +17,44 @@
    │  │  ├─ container
    │  │  │  ├─ Container.js.html
    │  │  │  └─ index.html
+   │  │  ├─ core
+   │  │  │  ├─ bootstrap.js.html
+   │  │  │  ├─ container
+   │  │  │  │  ├─ Container.js.html
+   │  │  │  │  └─ index.html
+   │  │  │  ├─ errors
+   │  │  │  │  ├─ Error.js.html
+   │  │  │  │  ├─ ErrorService.js.html
+   │  │  │  │  ├─ index.html
+   │  │  │  │  ├─ index.js.html
+   │  │  │  │  ├─ integrations
+   │  │  │  │  │  ├─ IFrameworkIntegration.js.html
+   │  │  │  │  │  ├─ IntegrationRegistry.js.html
+   │  │  │  │  │  ├─ fastify
+   │  │  │  │  │  │  ├─ FastifyIntegration.js.html
+   │  │  │  │  │  │  ├─ handler.js.html
+   │  │  │  │  │  │  ├─ index.html
+   │  │  │  │  │  │  └─ serializer.js.html
+   │  │  │  │  │  └─ index.html
+   │  │  │  │  ├─ manifest.js.html
+   │  │  │  │  └─ types
+   │  │  │  │     ├─ AccessError.js.html
+   │  │  │  │     ├─ AuthError.js.html
+   │  │  │  │     ├─ ConfigError.js.html
+   │  │  │  │     ├─ ModuleError.js.html
+   │  │  │  │     ├─ NetworkError.js.html
+   │  │  │  │     ├─ ServiceError.js.html
+   │  │  │  │     ├─ ValidationError.js.html
+   │  │  │  │     ├─ index.html
+   │  │  │  │     └─ index.js.html
+   │  │  │  └─ index.html
    │  │  ├─ errors
    │  │  │  ├─ Error.js.html
    │  │  │  ├─ index.html
    │  │  │  ├─ index.js.html
    │  │  │  ├─ integrations
    │  │  │  │  ├─ IFrameworkIntegration.js.html
+   │  │  │  │  ├─ IntegrationRegistry.js.html
    │  │  │  │  ├─ fastify
    │  │  │  │  │  ├─ FastifyIntegration.js.html
    │  │  │  │  │  ├─ handler.js.html
@@ -49,6 +81,7 @@
    ├─ dev
    │  ├─ current_code.txt
    │  ├─ docs
+   │  │  ├─ claude_prompt.md
    │  │  ├─ dev_manual.md
    │  │  ├─ dev_roadmap.md
    │  │  └─ technical.md
