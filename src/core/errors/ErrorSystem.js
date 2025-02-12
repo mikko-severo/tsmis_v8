@@ -16,6 +16,9 @@ export class ErrorSystem extends EventEmitter {
     this.handlers = new Map();
     this.errorTypes = new Map(Object.entries(ErrorTypes));
     this.initialized = false;
+
+      // Ensure a default handler is always present
+  this.registerHandler('*', this.defaultErrorHandler.bind(this));
   }
 
   async initialize() {
@@ -57,9 +60,9 @@ export class ErrorSystem extends EventEmitter {
   }
 
   async handleError(error, context = {}) {
-    const errorType = error.constructor.name;
-    const handler = this.handlers.get(errorType) || this.handlers.get('*');
-
+    // Ensure we always have a handler
+    const handler = this.handlers.get(error.constructor.name) || this.handlers.get('*') || this.defaultErrorHandler;
+  
     try {
       await handler(error, context);
       this.emit('error:handled', { error, context });
@@ -70,15 +73,16 @@ export class ErrorSystem extends EventEmitter {
     }
   }
 
-  defaultErrorHandler(error, context = {}) {
-    this.logger.error('Error:', {
-      type: error.constructor.name,
-      code: error.code,
-      message: error.message,
-      details: error.details,
-      context
-    });
-  }
+// Ensure defaultErrorHandler is always a function
+defaultErrorHandler(error, context = {}) {
+  this.logger.error('Unhandled error:', {
+    type: error.constructor.name,
+    code: error.code,
+    message: error.message,
+    details: error.details,
+    context
+  });
+}
 
   createError(type, code, message, details = {}, options = {}) {
     const ErrorType = this.errorTypes.get(type) || CoreError;

@@ -137,38 +137,60 @@ export class CoreContainer extends EventEmitter {
         `Component ${name} is not registered`
       );
     }
-
+  
     const { Component, options } = this.components.get(name);
-
+  
     // Return existing instance for singletons
     if (options.singleton && this.instances.has(name)) {
       return this.instances.get(name);
     }
-
-    // Resolve dependencies
-    const deps = this.dependencies.get(name);
-    const resolvedDeps = {};
-
-    for (const dep of deps) {
-      resolvedDeps[dep] = await this.resolve(dep);
+  
+    // Handle different component types
+    let instance;
+    if (typeof Component === 'function') {
+      // If it's a class constructor
+      if (Component.prototype) {
+        instance = new Component();
+      } 
+      // If it's a factory function
+      else {
+        instance = Component();
+      }
+    } else {
+      // If it's already an instance
+      instance = Component;
     }
-
-    // Create instance
-    const instance = new Component(resolvedDeps);
-    
+  
+    // Cache singleton instance
     if (options.singleton) {
       this.instances.set(name, instance);
     }
-
+  
+    // Resolve dependencies
+    const deps = this.dependencies.get(name);
+    const resolvedDeps = {};
+  
+    for (const dep of deps) {
+      resolvedDeps[dep] = await this.resolve(dep);
+    }
+  
+    // If the instance is a function that can be called with dependencies
+    if (typeof instance === 'function' && instance.length > 0) {
+      instance = instance(resolvedDeps);
+    }
+    // If the instance has a constructor that takes dependencies
+    else if (instance.constructor.length > 0) {
+      instance = new instance.constructor(resolvedDeps);
+    }
+  
     // Initialize if container is already initialized
     if (this.initialized && typeof instance.initialize === 'function') {
       await instance.initialize();
     }
-
+  
     this.emit('component:resolved', { name, instance });
     return instance;
   }
-
   /**
    * Initialize all registered components
    */
