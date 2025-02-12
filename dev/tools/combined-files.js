@@ -18,7 +18,7 @@ const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, '../..'); // Project root directory (one level up from dev folder)
 const devDir = __dirname; // Dev directory where the script is located
 const sourceDir = path.join(rootDir, 'src'); // Directory containing your source files
-const testDir = path.join(rootDir, 'tests'); // Directory containing your test files
+//const testDir = path.join(rootDir, 'tests'); // Directory containing your test files
 const outputFile = path.join(devDir, '../current_code.txt'); // Output file name with .txt extension in dev folder
 const additionalFiles = ['server.js', 'vite.config.js', '.env', 'package.json']; // Files in root directory to include
 
@@ -65,7 +65,7 @@ async function combineFiles() {
   let files = await getFiles(sourceDir);
   
   // Add files from the test directory
-  files = files.concat(await getFiles(testDir));
+  //files = files.concat(await getFiles(testDir));
   
   for (const file of additionalFiles) {
     try {

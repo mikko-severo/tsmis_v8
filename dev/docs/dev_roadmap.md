@@ -16,13 +16,10 @@ Version 1.0
 - [ ] Testing infrastructure
 
 ### Phase 2: Basic services(Next)
-- [ ] User management system
 - [ ] Database integration
 - [ ] Authentication & authorization
-- [ ] Basic inventory module
-- [ ] File management system
 - [ ] Logging & monitoring
-- [ ] Development tools & utilities
+- [ ] tools & utilities
 
 ### Phase 3: Example Modules 
 - [ ] Advanced inventory features
@@ -31,6 +28,9 @@ Version 1.0
 - [ ] Document management
 - [ ] Reporting system
 - [ ] Analytics dashboard
+- [ ] User management system
+- [ ] Basic inventory module
+- [ ] File management system
 
 ### Phase 4: Integration & Enhancement
 - [ ] Advanced security features

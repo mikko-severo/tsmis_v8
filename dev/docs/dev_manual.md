@@ -67,7 +67,7 @@ VS Code + Extensions
 ### Phase 1: Foundation (Current)
 - [x] Project structure
 - [x] Core architecture
-- [ ] Basic components
+- [ ] Basic Core components
   - [x] Container and Registry system
   - [ ] Module system
   - [ ] Event system
