@@ -1,6 +1,6 @@
 // tests/core/container/Container.test.js
 
-import { Container } from "../../../src/core/container/Container.js";
+import { CoreContainer } from "../../../src/core/container/Container.js";
 import { ConfigError, ServiceError } from "../../../src/core/errors/index.js";
 
 describe("Container", () => {
@@ -20,7 +20,7 @@ describe("Container", () => {
   }
 
   beforeEach(() => {
-    container = new Container();
+    container = new CoreContainer();
   });
 
   describe("Component Registration", () => {
@@ -590,7 +590,7 @@ describe("Container", () => {
     });
     test("should prevent subsequent initialization attempts after first successful init", async () => {
       // Ensure previous tests don't interfere
-      const freshContainer = new Container();
+      const freshContainer = new CoreContainer();
 
       class TestComponent {
         async initialize() {}
@@ -611,7 +611,7 @@ describe("Container", () => {
       );
     });
     test("should throw ConfigError for missing dependency", () => {
-      const container = new Container();
+      const container = new CoreContainer();
 
       class ComponentA {
         static dependencies = ["missingComponent"];
@@ -643,7 +643,7 @@ describe("Container", () => {
     });
 
     test("should handle multiple missing dependencies", () => {
-      const container = new Container();
+      const container = new CoreContainer();
 
       class ComponentA {
         static dependencies = ["missingComponentX", "missingComponentY"];
@@ -671,7 +671,7 @@ describe("Container", () => {
     let container;
 
     beforeEach(() => {
-      container = new Container();
+      container = new CoreContainer();
     });
 
     describe("Initialization Prevention", () => {
@@ -820,7 +820,7 @@ describe("Container", () => {
     describe("Initialization Guard Coverage", () => {
       test("should definitively cover line 219 condition", async () => {
         // Create a subclass to expose internal state for testing
-        class TestableContainer extends Container {
+        class TestableContainer extends CoreContainer {
           getInitializedState() {
             return this.initialized;
           }
@@ -870,7 +870,7 @@ describe("Container", () => {
       });
 
       test("should trigger initialization guard explicitly", async () => {
-        const testContainer = new Container();
+        const testContainer = new CoreContainer();
 
         class TestComponent {
           static initLog = [];
@@ -904,7 +904,7 @@ describe("Container", () => {
       });
 
       test("should verify initialization guard state", async () => {
-        const testContainer = new Container();
+        const testContainer = new CoreContainer();
 
         class TestComponent {
           async initialize() {}
@@ -932,7 +932,7 @@ describe("Container", () => {
           }
         }
 
-        const container = new Container();
+        const container = new CoreContainer();
         container.register("test", TestComponent, { singleton: true });
 
         // First resolution
@@ -952,7 +952,7 @@ describe("Container", () => {
           }
         }
 
-        const container = new Container();
+        const container = new CoreContainer();
         container.register("test", TestComponent, { singleton: false });
 
         // First resolution
@@ -968,7 +968,7 @@ describe("Container", () => {
 
     describe("Dependency Order Tracking", () => {
       test("should properly manage visiting set during dependency resolution", () => {
-        const container = new Container();
+        const container = new CoreContainer();
 
         class ComponentA {
           static dependencies = ["componentB"];
@@ -992,7 +992,7 @@ describe("Container", () => {
       });
 
       test("should handle complex dependency graphs", () => {
-        const container = new Container();
+        const container = new CoreContainer();
 
         class ComponentA {
           static dependencies = ["componentB", "componentC"];
@@ -1027,7 +1027,7 @@ describe("Container", () => {
 
     describe("Dependency Order Edge Cases", () => {
       test("should handle components with no dependencies", () => {
-        const container = new Container();
+        const container = new CoreContainer();
 
         class ComponentWithNoDependencies {}
         class ComponentWithEmptyDependencies {
@@ -1047,7 +1047,7 @@ describe("Container", () => {
       });
 
       test("should correctly handle fallback to empty array for dependencies", () => {
-        const container = new Container();
+        const container = new CoreContainer();
 
         class TestComponent {
           // No static dependencies defined
@@ -1056,7 +1056,7 @@ describe("Container", () => {
         container.register("test", TestComponent);
 
         // Create a custom container to track dependency retrieval
-        class TrackingContainer extends Container {
+        class TrackingContainer extends CoreContainer {
           constructor() {
             super();
             this.dependencyRetrievals = 0;
@@ -1087,7 +1087,7 @@ describe("Container", () => {
       });
 
       test("should process components with mix of dependencies", () => {
-        const container = new Container();
+        const container = new CoreContainer();
 
         class ComponentA {
           static dependencies = ["componentB"];
@@ -1113,7 +1113,7 @@ describe("Container", () => {
       });
 
       test("should handle multiple components with varying dependency configurations", () => {
-        const container = new Container();
+        const container = new CoreContainer();
 
         class ComponentWithSingleDependency {
           static dependencies = ["simpleComponent"];
@@ -1149,7 +1149,7 @@ describe("Container", () => {
         test('should handle component with absolutely no dependency information', () => {
           class ComponentWithNoDepInfo {}
       
-          const container = new Container();
+          const container = new CoreContainer();
       
           // Manually manipulate dependencies to ensure no entry
           container.dependencies.delete('noDepComponent');
@@ -1179,7 +1179,7 @@ describe("Container", () => {
             static dependencies = null;
           }
       
-          const container = new Container();
+          const container = new CoreContainer();
           container.register('nullDepComponent', ComponentWithNullDeps);
       
           // Directly verify dependencies

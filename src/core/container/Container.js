@@ -4,7 +4,7 @@ import { EventEmitter } from 'events';
 import { CoreError, ConfigError, ServiceError } from '../errors/index.js';
 // import { ValidationService } from '../validation/ValidationService.js';
 
-export class Container extends EventEmitter {
+export class CoreContainer extends EventEmitter {
   constructor() {
     super();
     this.components = new Map();
