@@ -99,10 +99,12 @@
    │  ├─ config
    │  ├─ core
    │  │  ├─ container
-   │  │  │  └─ Container.js
+   │  │  │  ├─ Container.js
+   │  │  │  └─ container-system-docs.md
    │  │  ├─ errors
    │  │  │  ├─ Error.js
    │  │  │  ├─ ErrorSystem.js
+   │  │  │  ├─ error-system-docs.md
    │  │  │  ├─ index.js
    │  │  │  ├─ integrations
    │  │  │  │  ├─ IFrameworkIntegration.js
@@ -156,20 +158,85 @@
 
 // src/app.js
 
-import { setupErrorHandler, errorSerializer } from './core/errors/integrations/fastify/index.js';
+import 'dotenv/config';
+import Fastify from 'fastify';
 
-// In your Fastify setup
-const fastify = Fastify({
-  logger: {
-    level: process.env.LOG_LEVEL || 'info',
-    serializers: {
-      error: errorSerializer.serializer
+// Core System Imports
+import { CoreContainer } from './core/container/Container.js';
+import { ErrorSystem, createErrorSystem } from './core/errors/ErrorSystem.js';
+import { setupErrorHandler } from './core/errors/integrations/fastify/handler.js';
+
+export async function buildApp() {
+  // Create the core container
+  const container = new CoreContainer();
+
+  // Create and register error system 
+  const errorSystemFactory = () => {
+    return createErrorSystem({ 
+      logger: console 
+    });
+  };
+  
+  // Register as a factory function
+  container.register('errorSystem', errorSystemFactory);
+
+  // Create Fastify instance with error serialization
+  const fastify = Fastify({
+    logger: {
+      level: process.env.LOG_LEVEL || 'info',
+      serializers: {
+        error: (error) => {
+          // Resolve error system and use its serializer
+          const errorSystem = container.resolve('errorSystem');
+          return errorSystem.serializeError(error);
+        }
+      }
     }
-  }
-});
+  });
 
-// Setup error handling
-setupErrorHandler(fastify);
+  // Setup Fastify error handling
+  setupErrorHandler(fastify);
+
+  // Initialize the container
+  try {
+    await container.initialize();
+  } catch (error) {
+    console.error('Container initialization error:', error);
+    throw error;
+  }
+
+  // Basic route as a health check
+  fastify.get('/', async (request, reply) => {
+    return { 
+      status: 'ok', 
+      timestamp: new Date().toISOString() 
+    };
+  });
+
+  // Graceful shutdown handling
+  const closeHandler = async () => {
+    try {
+      // Shutdown Fastify
+      await fastify.close();
+      
+      // Shutdown container
+      await container.shutdown();
+    } catch (error) {
+      console.error('Shutdown error:', error);
+    }
+  };
+
+  // Handle various shutdown signals
+  process.on('SIGINT', closeHandler);
+  process.on('SIGTERM', closeHandler);
+
+  // Add server close hook
+  fastify.addHook('onClose', async () => {
+    await container.shutdown();
+  });
+
+  return fastify;
+}
 
 
 // src/core/container/Container.js
@@ -313,38 +380,60 @@ export class CoreContainer extends EventEmitter {
         `Component ${name} is not registered`
       );
     }
-
+  
     const { Component, options } = this.components.get(name);
-
+  
     // Return existing instance for singletons
     if (options.singleton && this.instances.has(name)) {
       return this.instances.get(name);
     }
-
-    // Resolve dependencies
-    const deps = this.dependencies.get(name);
-    const resolvedDeps = {};
-
-    for (const dep of deps) {
-      resolvedDeps[dep] = await this.resolve(dep);
+  
+    // Handle different component types
+    let instance;
+    if (typeof Component === 'function') {
+      // If it's a class constructor
+      if (Component.prototype) {
+        instance = new Component();
+      } 
+      // If it's a factory function
+      else {
+        instance = Component();
+      }
+    } else {
+      // If it's already an instance
+      instance = Component;
     }
-
-    // Create instance
-    const instance = new Component(resolvedDeps);
-    
+  
+    // Cache singleton instance
     if (options.singleton) {
       this.instances.set(name, instance);
     }
-
+  
+    // Resolve dependencies
+    const deps = this.dependencies.get(name);
+    const resolvedDeps = {};
+  
+    for (const dep of deps) {
+      resolvedDeps[dep] = await this.resolve(dep);
+    }
+  
+    // If the instance is a function that can be called with dependencies
+    if (typeof instance === 'function' && instance.length > 0) {
+      instance = instance(resolvedDeps);
+    }
+    // If the instance has a constructor that takes dependencies
+    else if (instance.constructor.length > 0) {
+      instance = new instance.constructor(resolvedDeps);
+    }
+  
     // Initialize if container is already initialized
     if (this.initialized && typeof instance.initialize === 'function') {
       await instance.initialize();
     }
-
+  
     this.emit('component:resolved', { name, instance });
     return instance;
   }
-
   /**
    * Initialize all registered components
    */
@@ -454,6 +543,366 @@ async shutdown() {
     this.emit('shutdown');
   }
 }
+
+
+// src/core/container/container-system-docs.md
+
+# CoreContainer System Documentation
+
+## Table of Contents
+1. [Overview](#overview)
+2. [Purpose](#purpose)
+3. [System Architecture](#system-architecture)
+4. [Core Concepts](#core-concepts)
+5. [Installation](#installation)
+6. [Usage](#usage)
+7. [Advanced Features](#advanced-features)
+8. [Best Practices](#best-practices)
+9. [Extending the System](#extending-the-system)
+10. [Troubleshooting](#troubleshooting)
+
+## Overview
+
+The CoreContainer System is a sophisticated Dependency Injection (DI) and Inversion of Control (IoC) container designed to manage component lifecycles, dependencies, and system initialization.
+
+## Purpose
+
+The primary goals of the CoreContainer System are to:
+- Manage component dependencies
+- Facilitate loose coupling between system components
+- Automate component initialization and shutdown
+- Provide a centralized component registry
+- Support complex dependency graphs
+
+## System Architecture
+
+### Core Components
+
+1. **CoreContainer** (`src/core/container/Container.js`)
+   - Central component management system
+   - Handles component registration
+   - Manages dependency resolution
+   - Controls component lifecycle
+
+### Architecture Diagram
+
+```mermaid
+graph TD
+    A[CoreContainer] --> B[Component Registration]
+    A --> C[Dependency Resolution]
+    A --> D[Lifecycle Management]
+    
+    B --> E[Singleton/Transient Components]
+    B --> F[Dependency Tracking]
+    
+    C --> G[Topological Sorting]
+    C --> H[Circular Dependency Detection]
+    
+    D --> I[Initialization]
+    D --> J[Shutdown]
+    D --> K[Event Emission]
+```
+
+## Core Concepts
+
+### Component Registration
+
+- Components can be registered with optional configuration
+- Supports singleton and transient component modes
+- Tracks component dependencies
+
+### Dependency Resolution
+
+- Automatically resolves and injects dependencies
+- Supports complex dependency graphs
+- Prevents circular dependencies
+- Ensures correct initialization order
+
+### Lifecycle Management
+
+- Provides `initialize()` and `shutdown()` methods
+- Supports component-specific initialization logic
+- Graceful shutdown with error handling
+
+## Installation
+
+```bash
+npm install @your-org/core-container-system
+```
+
+## Usage
+
+### Basic Component Registration
+
+```javascript
+import { CoreContainer } from '@your-org/core-container-system';
+
+class LoggerService {
+  async initialize() {
+    console.log('Logger initialized');
+  }
+}
+
+class DatabaseService {
+  static dependencies = ['logger'];
+
+  constructor(deps) {
+    this.logger = deps.logger;
+  }
+
+  async initialize() {
+    this.logger.log('Connecting to database');
+    // Database connection logic
+  }
+
+  async shutdown() {
+    // Close database connection
+  }
+}
+
+const container = new CoreContainer();
+
+// Register components
+container.register('logger', LoggerService);
+container.register('database', DatabaseService);
+
+// Initialize all components
+await container.initialize();
+```
+
+### Advanced Dependency Injection
+
+```javascript
+class AuthService {
+  static dependencies = ['database', 'logger'];
+
+  constructor(deps) {
+    this.database = deps.database;
+    this.logger = deps.logger;
+  }
+
+  async authenticate(credentials) {
+    this.logger.log('Authentication attempt');
+    // Authentication logic
+  }
+}
+
+container.register('auth', AuthService);
+```
+
+### Dependency Resolution
+
+The CoreContainer uses a sophisticated dependency resolution mechanism:
+
+#### Key Resolution Strategies
+- Automatically resolves and injects dependencies
+- Supports complex dependency graphs
+- Prevents circular dependencies
+- Ensures correct initialization order
+
+#### Dependency Resolution Algorithm
+
+```mermaid
+graph TD
+    A[Start Dependency Resolution] --> B{Analyze Component Dependencies}
+    B --> |Topological Sorting| C[Resolve Dependency Order]
+    C --> D{Check for Circular Dependencies}
+    D --> |Circular Detected| E[Throw ConfigError]
+    D --> |No Circularity| F[Create Dependency Injection Map]
+    F --> G[Initialize Components in Order]
+```
+
+#### Circular Dependency Prevention
+
+```javascript
+resolveDependencyOrder() {
+  const visited = new Set();
+  const visiting = new Set();
+  const order = [];
+
+  const visit = (name) => {
+    if (visited.has(name)) return;
+    if (visiting.has(name)) {
+      throw new ConfigError(
+        'CIRCULAR_DEPENDENCY',
+        `Circular dependency detected: ${name}`
+      );
+    }
+
+    visiting.add(name);
+    
+    const deps = this.dependencies.get(name) || [];
+    for (const dep of deps) {
+      visit(dep);
+    }
+    
+    visiting.delete(name);
+    visited.add(name);
+    order.push(name);
+  };
+
+  for (const name of this.components.keys()) {
+    visit(name);
+  }
+
+  return order;
+}
+```
+
+#### Complex Dependency Example
+
+```javascript
+class DatabaseService {
+  static dependencies = ['logger', 'configManager'];
+  // ...
+}
+
+class AuthService {
+  static dependencies = ['database', 'logger'];
+  // ...
+}
+
+class UserService {
+  static dependencies = ['database', 'auth'];
+  // ...
+}
+
+// CoreContainer will resolve in correct order:
+// 1. Logger
+// 2. ConfigManager
+// 3. Database
+// 4. Auth
+// 5. User Services
+```
+
+## Advanced Features
+
+### Event Handling
+
+The CoreContainer emits events during key lifecycle stages:
+
+```javascript
+container.on('component:registered', ({ name, Component }) => {
+  console.log(`Component ${name} registered`);
+});
+
+container.on('initialized', () => {
+  console.log('All components initialized');
+});
+```
+
+### Component Registration Flexibility
+
+The CoreContainer supports multiple component registration styles:
+
+```javascript
+// Class Constructor
+container.register('service', MyService);
+
+// Factory Function
+container.register('service', () => new MyService());
+
+// Existing Instance
+container.register('service', myServiceInstance);
+
+// With Singleton/Transient Options
+container.register('service', MyService, { 
+  singleton: true,  // Default behavior
+  singleton: false  // Create new instance each time
+});
+```
+
+### Dependency Injection Modes
+
+1. **Constructor Injection**
+```javascript
+class DatabaseService {
+  constructor(deps) {
+    this.logger = deps.logger;
+  }
+}
+```
+
+2. **Factory Function Injection**
+```javascript
+const createAuthService = (deps) => {
+  return {
+    login: () => {
+      deps.logger.log('Login attempt');
+    }
+  };
+};
+```
+
+### Advanced Resolution Strategies
+
+- Supports multiple component definition styles
+- Automatic dependency resolution
+- Lazy initialization
+- Singleton instance caching
+- Dynamic dependency injection
+
+
+### Dependency Tracking
+
+- Dynamic dependency tracking
+- Supports optional and required dependencies
+- Provides detailed dependency graphs
+- Enables lazy loading of components
+
+## Best Practices
+
+1. Declare component dependencies explicitly
+2. Keep components loosely coupled
+3. Use dependency injection for better testability
+4. Implement `initialize()` and `shutdown()` methods
+5. Avoid complex initialization logic
+
+## Extending the System
+
+### Custom Component Lifecycle
+
+```javascript
+class CustomComponent {
+  async initialize() {
+    // Custom initialization
+  }
+
+  async shutdown() {
+    // Custom cleanup
+  }
+}
+```
+
+## Troubleshooting
+
+### Common Issues
+
+- **Circular Dependencies**: Carefully manage component dependencies
+- **Initialization Order**: Ensure correct dependency declaration
+- **Error Handling**: Implement robust error handling in component methods
+
+## Limitations
+
+- Does not support dynamic component registration after initialization
+- Requires explicit dependency declaration
+- Limited to single-instance dependency injection
+
+## Future Roadmap
+
+- [ ] Dynamic component registration
+- [ ] Nested container support
+- [ ] More advanced dependency resolution
+- [ ] Enhanced error handling
+- [ ] Performance optimizations
+
+## Contributing
+
+Guidelines for contributing to the CoreContainer System will be added in future versions.
+
+## License
+
+[Your License Information]
 
 
 // src/core/errors/Error.js
@@ -661,6 +1110,9 @@ export class ErrorSystem extends EventEmitter {
     this.handlers = new Map();
     this.errorTypes = new Map(Object.entries(ErrorTypes));
     this.initialized = false;
+
+      // Ensure a default handler is always present
+  this.registerHandler('*', this.defaultErrorHandler.bind(this));
   }
 
   async initialize() {
@@ -702,9 +1154,9 @@ export class ErrorSystem extends EventEmitter {
   }
 
   async handleError(error, context = {}) {
-    const errorType = error.constructor.name;
-    const handler = this.handlers.get(errorType) || this.handlers.get('*');
-
+    // Ensure we always have a handler
+    const handler = this.handlers.get(error.constructor.name) || this.handlers.get('*') || this.defaultErrorHandler;
+  
     try {
       await handler(error, context);
       this.emit('error:handled', { error, context });
@@ -715,15 +1167,16 @@ export class ErrorSystem extends EventEmitter {
     }
   }
 
-  defaultErrorHandler(error, context = {}) {
-    this.logger.error('Error:', {
-      type: error.constructor.name,
-      code: error.code,
-      message: error.message,
-      details: error.details,
-      context
-    });
-  }
+// Ensure defaultErrorHandler is always a function
+defaultErrorHandler(error, context = {}) {
+  this.logger.error('Unhandled error:', {
+    type: error.constructor.name,
+    code: error.code,
+    message: error.message,
+    details: error.details,
+    context
+  });
+}
 
   createError(type, code, message, details = {}, options = {}) {
     const ErrorType = this.errorTypes.get(type) || CoreError;
@@ -746,6 +1199,321 @@ export class ErrorSystem extends EventEmitter {
 export function createErrorSystem(deps) {
   return new ErrorSystem(deps);
 }
+
+
+// src/core/errors/error-system-docs.md
+
+# Error System Documentation
+
+## Table of Contents
+1. [Overview](#overview)
+2. [Purpose](#purpose)
+3. [System Architecture](#system-architecture)
+4. [Error Types](#error-types)
+5. [Installation](#installation)
+6. [Usage](#usage)
+7. [Advanced Features](#advanced-features)
+8. [Best Practices](#best-practices)
+9. [Extending the System](#extending-the-system)
+10. [Troubleshooting](#troubleshooting)
+
+## Overview
+
+The Error System is a comprehensive, extensible error handling framework designed to provide robust, consistent error management across the application.
+
+## Purpose
+
+The primary goals of the Error System are to:
+- Standardize error representation
+- Provide detailed error context
+- Enable flexible error handling
+- Support comprehensive error logging and tracking
+- Facilitate easier debugging and system observability
+
+## System Architecture
+
+### Core Components
+
+1. **CoreError** (`src/core/errors/Error.js`)
+   - Base error class for all custom errors
+   - Provides advanced error serialization
+   - Handles error cause tracking
+   - Supports environment-specific error formatting
+
+2. **ErrorSystem** (`src/core/errors/ErrorSystem.js`)
+   - Manages error types and integrations
+   - Provides dynamic error handler registration
+   - Implements event-driven error handling
+
+3. **Error Types** (`src/core/errors/types/`)
+   - Specialized error classes for different domains:
+     * AccessError
+     * AuthError
+     * ConfigError
+     * ModuleError
+     * NetworkError
+     * ServiceError
+     * ValidationError
+
+### Architecture Diagram
+
+```mermaid
+graph TD
+    A[CoreError] --> B[Specialized Error Types]
+    A --> C[Error Serialization]
+    A --> D[Environment Handling]
+    
+    E[ErrorSystem] --> F[Error Handler Management]
+    E --> G[Integration Registry]
+    E --> H[Event Emission]
+    
+    B --> I[Domain-Specific Errors]
+    I --> J[Access Errors]
+    I --> K[Authentication Errors]
+    I --> L[Configuration Errors]
+```
+
+## Error Codes
+
+### Error Code Structure
+
+Error codes are structured to provide clear, hierarchical categorization:
+
+```javascript
+ErrorCodes = {
+  CORE: {
+    UNKNOWN: 'UNKNOWN_ERROR',
+    INITIALIZATION: 'INITIALIZATION_FAILED',
+    VALIDATION: 'VALIDATION_FAILED'
+  },
+  MODULE: {
+    INITIALIZATION: 'INITIALIZATION_FAILED',
+    REGISTRATION: 'REGISTRATION_FAILED',
+    DEPENDENCY: 'DEPENDENCY_ERROR'
+  },
+  // ... other error code categories
+}
+```
+
+### Using Error Codes
+
+```javascript
+import { ErrorCodes, ValidationError } from '@your-org/error-system';
+
+// Using predefined error codes
+const validationError = new ValidationError(
+  ErrorCodes.VALIDATION.FAILED, 
+  'Validation failed',
+  { details: 'Specific validation error' }
+);
+```
+
+## Framework Integration
+
+## Framework Integration
+
+### Fastify Error Handling
+
+The error system provides deep integration with Fastify, automatically handling various error scenarios:
+
+```javascript
+// Automatic error mapping
+fastify.get('/route', async (request, reply) => {
+  // Throws a 404 if route not found
+  // Automatically converted to NetworkError
+});
+
+// Custom error types are preserved
+throw new ValidationError('INVALID_INPUT', 'Validation failed');
+```
+
+### Error Mapping Examples
+
+```javascript
+// 404 Route Not Found
+// Automatically converted to:
+NetworkError {
+  code: 'NETWORK_ROUTE_NOT_FOUND',
+  message: 'Route GET:/test not found',
+  statusCode: 404
+}
+
+// Validation Error
+ValidationError {
+  code: 'VALIDATION_FAILED',
+  message: 'Invalid input',
+  statusCode: 400,
+  validationErrors: [...]
+}
+```
+
+### Error Serialization
+
+- Consistent JSON error format
+- Environment-aware error details
+- Preserves error context
+- Supports custom error types
+
+### Default Error Handling
+
+```javascript
+// Fallback error handler always exists
+errorSystem.handleError(error, context);
+```
+
+
+## Error Types
+
+### Available Error Types
+
+1. **AccessError**
+   - Used for authorization and access control issues
+   - Default status code: 403 (Forbidden)
+
+2. **AuthError**
+   - Used for authentication-related errors
+   - Default status code: 401 (Unauthorized)
+
+3. **ConfigError**
+   - Used for configuration and setup errors
+   - Default status code: 500 (Internal Server Error)
+
+4. **ModuleError**
+   - Used for module system and initialization errors
+   - Default status code: 500 (Internal Server Error)
+
+5. **NetworkError**
+   - Used for network-related errors
+   - Default status code: 503 (Service Unavailable)
+
+6. **ServiceError**
+   - Used for service-level errors
+   - Default status code: 503 (Service Unavailable)
+
+7. **ValidationError**
+   - Used for input validation errors
+   - Default status code: 400 (Bad Request)
+
+## Installation
+
+```bash
+npm install @your-org/error-system
+```
+
+## Usage
+
+### Basic Error Creation
+
+```javascript
+import { 
+  ValidationError, 
+  ErrorCodes 
+} from '@your-org/error-system';
+
+// Create a validation error
+const validationError = new ValidationError(
+  ErrorCodes.VALIDATION.FAILED, 
+  'Invalid user input', 
+  { 
+    validationErrors: [
+      { field: 'email', message: 'Invalid email format' }
+    ]
+  }
+);
+```
+
+### Error Handling with ErrorSystem
+
+```javascript
+import { ErrorSystem } from '@your-org/error-system';
+
+// Create error system
+const errorSystem = new ErrorSystem({ logger: customLogger });
+
+// Register a custom error handler
+errorSystem.registerHandler('ValidationError', (error, context) => {
+  // Custom handling logic
+  logger.warn(`Validation failed: ${error.message}`, {
+    errors: error.validationErrors,
+    context
+  });
+});
+
+// Handle an error
+try {
+  // Some operation that might throw an error
+} catch (error) {
+  await errorSystem.handleError(error);
+}
+```
+
+## Advanced Features
+
+### Error Cause Tracking
+
+```javascript
+const originalError = new Error('Database connection failed');
+const wrappedError = new ServiceError(
+  'DB_CONNECTION', 
+  'Could not connect to database', 
+  {}, 
+  { cause: originalError }
+);
+```
+
+### JSON Serialization
+
+```javascript
+const error = new ValidationError('INVALID_INPUT', 'Validation failed');
+const serializedError = error.toJSON();
+// Can be sent over network, logged, etc.
+```
+
+## Best Practices
+
+1. Always use specific error types
+2. Include detailed context in error details
+3. Use error codes for consistent error identification
+4. Log errors with sufficient context
+5. Handle errors at appropriate levels
+
+## Extending the System
+
+### Creating a Custom Error Type
+
+```javascript
+import { CoreError } from '@your-org/error-system';
+
+class CustomDomainError extends CoreError {
+  constructor(code, message, details = {}, options = {}) {
+    super(`CUSTOM_${code}`, message, details, options);
+    this.statusCode = 422; // Custom status code
+  }
+}
+```
+
+## Troubleshooting
+
+### Common Issues
+
+- **Circular Error Handling**: Avoid recursive error handling
+- **Over-logging**: Be cautious about logging sensitive information
+- **Error Serialization**: Ensure error details are JSON-serializable
+
+## Future Roadmap
+
+- [ ] Enhanced error tracking
+- [ ] Distributed tracing support
+- [ ] More granular error categorization
+- [ ] Performance optimizations
+
+## Contributing
+
+Guidelines for contributing to the Error System will be added in future versions.
+
+## License
+
+[Your License Information]
 
 
 // src/core/errors/index.js
@@ -2572,6 +3340,8 @@ describe("Container", () => {
         });
       });
   });
+
+
 });
 
 
@@ -3505,7 +4275,40 @@ describe("ErrorSystem", () => {
     });
   });
 
-
+  describe("Error Handler Resolution", () => {
+    test("should fall back to defaultErrorHandler when no handlers exist", async () => {
+      const mockLogger = {
+        error: createMockFn(),
+        warn: createMockFn(),
+        info: createMockFn()
+      };
+  
+      const errorSystem = new ErrorSystem({ logger: mockLogger });
+      await errorSystem.initialize();
+      
+      // Clear ALL handlers including the wildcard handler
+      errorSystem.handlers.clear();
+      
+      // Save the defaultErrorHandler reference
+      const defaultHandler = errorSystem.defaultErrorHandler.bind(errorSystem);
+      
+      // Re-add only the defaultErrorHandler method (not as a handler)
+      errorSystem.defaultErrorHandler = defaultHandler;
+      
+      const error = new CoreError('TEST', 'test message');
+      await errorSystem.handleError(error);
+      
+      expect(mockLogger.error.mock.calls.length).toBe(1);
+      expect(mockLogger.error.mock.calls[0][0]).toBe('Unhandled error:');
+      expect(mockLogger.error.mock.calls[0][1]).toEqual({
+        type: 'CoreError',
+        code: 'TEST',
+        message: 'test message',
+        details: {},
+        context: {}
+      });
+    });
+  });
 });
 
 

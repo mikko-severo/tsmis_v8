@@ -425,5 +425,38 @@ describe("ErrorSystem", () => {
     });
   });
 
-
+  describe("Error Handler Resolution", () => {
+    test("should fall back to defaultErrorHandler when no handlers exist", async () => {
+      const mockLogger = {
+        error: createMockFn(),
+        warn: createMockFn(),
+        info: createMockFn()
+      };
+  
+      const errorSystem = new ErrorSystem({ logger: mockLogger });
+      await errorSystem.initialize();
+      
+      // Clear ALL handlers including the wildcard handler
+      errorSystem.handlers.clear();
+      
+      // Save the defaultErrorHandler reference
+      const defaultHandler = errorSystem.defaultErrorHandler.bind(errorSystem);
+      
+      // Re-add only the defaultErrorHandler method (not as a handler)
+      errorSystem.defaultErrorHandler = defaultHandler;
+      
+      const error = new CoreError('TEST', 'test message');
+      await errorSystem.handleError(error);
+      
+      expect(mockLogger.error.mock.calls.length).toBe(1);
+      expect(mockLogger.error.mock.calls[0][0]).toBe('Unhandled error:');
+      expect(mockLogger.error.mock.calls[0][1]).toEqual({
+        type: 'CoreError',
+        code: 'TEST',
+        message: 'test message',
+        details: {},
+        context: {}
+      });
+    });
+  });
 });

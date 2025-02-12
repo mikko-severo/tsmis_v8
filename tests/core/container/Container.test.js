@@ -965,7 +965,6 @@ describe("Container", () => {
         expect(firstInstance).not.toBe(secondInstance);
       });
     });
-
     describe("Dependency Order Tracking", () => {
       test("should properly manage visiting set during dependency resolution", () => {
         const container = new CoreContainer();
@@ -1024,7 +1023,6 @@ describe("Container", () => {
         ]);
       });
     });
-
     describe("Dependency Order Edge Cases", () => {
       test("should handle components with no dependencies", () => {
         const container = new CoreContainer();
@@ -1145,51 +1143,357 @@ describe("Container", () => {
         expect(order).toContain("multiDepsComponent");
       });
     });
-    describe('Dependency Retrieval Branch Coverage', () => {
-        test('should handle component with absolutely no dependency information', () => {
-          class ComponentWithNoDepInfo {}
-      
-          const container = new CoreContainer();
-      
-          // Manually manipulate dependencies to ensure no entry
-          container.dependencies.delete('noDepComponent');
-      
-          // Register component
-          container.register('noDepComponent', ComponentWithNoDepInfo);
-      
-          // Override dependencies.get to return undefined explicitly
-          const originalGet = container.dependencies.get.bind(container.dependencies);
-          container.dependencies.get = (name) => {
-            if (name === 'noDepComponent') return undefined;
-            return originalGet(name);
-          };
-      
-          // Resolve dependency order
-          const order = container.resolveDependencyOrder();
-      
-          // Verify component is processed
-          expect(order).toContain('noDepComponent');
-      
-          // Restore original method
-          container.dependencies.get = originalGet;
-        });
-      
-        test('should explicitly test null/undefined dependency fallback', () => {
-          class ComponentWithNullDeps {
-            static dependencies = null;
-          }
-      
-          const container = new CoreContainer();
-          container.register('nullDepComponent', ComponentWithNullDeps);
-      
-          // Directly verify dependencies
-          const deps = container.dependencies.get('nullDepComponent');
-          expect(deps).toEqual([]);
-      
-          // Resolve dependency order
-          const order = container.resolveDependencyOrder();
-          expect(order).toContain('nullDepComponent');
-        });
+    describe("Dependency Retrieval Branch Coverage", () => {
+      test("should handle component with absolutely no dependency information", () => {
+        class ComponentWithNoDepInfo {}
+
+        const container = new CoreContainer();
+
+        // Manually manipulate dependencies to ensure no entry
+        container.dependencies.delete("noDepComponent");
+
+        // Register component
+        container.register("noDepComponent", ComponentWithNoDepInfo);
+
+        // Override dependencies.get to return undefined explicitly
+        const originalGet = container.dependencies.get.bind(
+          container.dependencies
+        );
+        container.dependencies.get = (name) => {
+          if (name === "noDepComponent") return undefined;
+          return originalGet(name);
+        };
+
+        // Resolve dependency order
+        const order = container.resolveDependencyOrder();
+
+        // Verify component is processed
+        expect(order).toContain("noDepComponent");
+
+        // Restore original method
+        container.dependencies.get = originalGet;
       });
+
+      test("should explicitly test null/undefined dependency fallback", () => {
+        class ComponentWithNullDeps {
+          static dependencies = null;
+        }
+
+        const container = new CoreContainer();
+        container.register("nullDepComponent", ComponentWithNullDeps);
+
+        // Directly verify dependencies
+        const deps = container.dependencies.get("nullDepComponent");
+        expect(deps).toEqual([]);
+
+        // Resolve dependency order
+        const order = container.resolveDependencyOrder();
+        expect(order).toContain("nullDepComponent");
+      });
+    });
+    describe("Detailed Resolution Tests", () => {
+      test("should handle component with undefined dependencies specifically on line 157-161", async () => {
+        // Create a custom component that will trigger the specific branch
+        class TestComponent {
+          constructor() {
+            // Intentionally do nothing to test the specific branch
+          }
+        }
+
+        // Modify the container to force a specific test scenario
+        const originalDependenciesGet = container.dependencies.get;
+        container.dependencies.get = (name) => {
+          if (name === "test") return undefined;
+          return originalDependenciesGet.call(container.dependencies, name);
+        };
+
+        container.register("test", TestComponent);
+
+        // Set initialized to true to trigger the specific code path
+        container.initialized = true;
+
+        const instance = await container.resolve("test");
+        expect(instance).toBeInstanceOf(TestComponent);
+
+        // Restore the original method
+        container.dependencies.get = originalDependenciesGet;
+      });
+
+      test("should handle component with explicitly empty dependencies array on line 179", async () => {
+        // Create a component with explicitly empty dependencies
+        class TestComponent {
+          static dependencies = []; // Explicitly empty array
+
+          constructor(deps = {}) {
+            this.deps = deps;
+          }
+        }
+
+        container.register("test", TestComponent);
+
+        // Force the initialized state
+        container.initialized = true;
+
+        const instance = await container.resolve("test");
+        expect(instance).toBeInstanceOf(TestComponent);
+        expect(instance.deps).toEqual({}); // Should receive empty deps object
+      });
+      test("should handle non-function component with dependencies on line 176", async () => {
+        // Create an instance component (not a function/class)
+        const instanceComponent = {
+          someProperty: 'test'
+        };
+    
+        // Create a dependency component
+        class DependencyComponent {
+          constructor() {
+            this.type = 'dependency';
+          }
+        }
+    
+        // Register the instance component with a dependency
+        container.register('instance', instanceComponent);
+        container.register('dependency', DependencyComponent);
+    
+        // Manually set dependencies for the instance component
+        container.dependencies.set('instance', ['dependency']);
+    
+        // Resolve the instance component
+        const resolved = await container.resolve('instance');
+    
+        // Verify the resolved component is the same instance
+        expect(resolved).toBe(instanceComponent);
+    
+        // Verify that dependencies were resolved
+        const dependencyInstance = await container.resolve('dependency');
+        expect(dependencyInstance).toBeInstanceOf(DependencyComponent);
+      });
+      test("should handle components with different dependency resolution scenarios", async () => {
+        const initializationLog = [];
+
+        // Component with no dependencies
+        class SimpleComponent {
+          async initialize() {
+            initializationLog.push("simple");
+          }
+        }
+
+        // Component with empty dependencies array
+        class EmptyDepsComponent {
+          static dependencies = [];
+          async initialize() {
+            initializationLog.push("empty");
+          }
+        }
+
+        // Component with undefined dependencies
+        class UndefinedDepsComponent {
+          // No static dependencies defined
+          async initialize() {
+            initializationLog.push("undefined");
+          }
+        }
+
+        // Register components
+        container.register("simple", SimpleComponent);
+        container.register("emptyDeps", EmptyDepsComponent);
+        container.register("undefinedDeps", UndefinedDepsComponent);
+
+        // Modify dependencies.get to return undefined for specific cases
+        const originalDependenciesGet = container.dependencies.get;
+        container.dependencies.get = (name) => {
+          if (name === "undefinedDeps") return undefined;
+          return originalDependenciesGet.call(container.dependencies, name);
+        };
+
+        // Set container to initialized state
+        container.initialized = true;
+
+        // Resolve components
+        await container.resolve("simple");
+        await container.resolve("emptyDeps");
+        await container.resolve("undefinedDeps");
+
+        // Verify all components were processed
+        expect(initializationLog).toContain("simple");
+        expect(initializationLog).toContain("empty");
+        expect(initializationLog).toContain("undefined");
+
+        // Restore original method
+        container.dependencies.get = originalDependenciesGet;
+      });
+
+      test("should gracefully handle edge cases in dependency resolution", async () => {
+        // A component with a factory function instead of a class
+        const factoryComponent = () => {
+          return {
+            factoryCreated: true,
+          };
+        };
+
+        // A component with a class that has no special methods
+        class MinimalComponent {}
+
+        container.register("factory", factoryComponent);
+        container.register("minimal", MinimalComponent);
+
+        // Force initialized state
+        container.initialized = true;
+
+        // Resolve components
+        const factoryInstance = await container.resolve("factory");
+        const minimalInstance = await container.resolve("minimal");
+
+        expect(factoryInstance.factoryCreated).toBe(true);
+        expect(minimalInstance).toBeInstanceOf(MinimalComponent);
+      });
+      test("should handle complex dependency scenarios", async () => {
+        const resolveLog = [];
+
+        // Components with interdependent and nested dependencies
+        class DependencyC {
+          constructor() {
+            resolveLog.push("C");
+          }
+        }
+
+        class DependencyB {
+          static dependencies = ["dependencyC"];
+          constructor(deps) {
+            this.c = deps.dependencyC;
+            resolveLog.push("B");
+          }
+        }
+
+        class DependencyA {
+          static dependencies = ["dependencyB"];
+          constructor(deps) {
+            this.b = deps.dependencyB;
+            resolveLog.push("A");
+          }
+        }
+
+        // Register components
+        container.register("dependencyA", DependencyA);
+        container.register("dependencyB", DependencyB);
+        container.register("dependencyC", DependencyC);
+
+        // Force initialized state
+        container.initialized = true;
+
+        // Resolve top-level dependency
+        const instanceA = await container.resolve("dependencyA");
+
+        // Verify correct resolution order and instance types
+        expect(resolveLog).toEqual(["C", "B", "A"]);
+        expect(instanceA).toBeInstanceOf(DependencyA);
+        expect(instanceA.b).toBeInstanceOf(DependencyB);
+        expect(instanceA.b.c).toBeInstanceOf(DependencyC);
+      });
+    });
+    describe("Edge Case Dependency Resolution", () => {
+      test("should handle error during dependency resolution on line 176", async () => {
+        // Create a component with a dependency that fails to resolve
+        class FailingDependencyComponent {
+          static dependencies = ["failingDep"];
+          constructor(deps) {
+            this.deps = deps;
+          }
+        }
+
+        // Create a mock dependency that will cause an error when resolved
+        class FailingDependency {
+          constructor() {
+            // Intentionally throw an error during instantiation
+            throw new Error("Dependency resolution failed");
+          }
+        }
+
+        // Register the components
+        container.register("mainComponent", FailingDependencyComponent);
+        container.register("failingDep", FailingDependency);
+
+        // Force initialized state
+        container.initialized = true;
+
+        // Expect an error to be thrown during resolution
+        await expect(container.resolve("mainComponent")).rejects.toThrow(
+          "Dependency resolution failed"
+        );
+      });
+
+      test("should handle unresolvable dependencies", async () => {
+        // Create a component with an unregistered dependency
+        class UnresolvableDependencyComponent {
+          static dependencies = ["unregisteredDep"];
+          constructor(deps) {
+            this.deps = deps;
+          }
+        }
+
+        // Register the component with an unregistered dependency
+        container.register("mainComponent", UnresolvableDependencyComponent);
+
+        // Force initialized state
+        container.initialized = true;
+
+        // Expect an error to be thrown due to unregistered dependency
+        await expect(container.resolve("mainComponent")).rejects.toThrow(
+          "Component unregisteredDep is not registered"
+        );
+      });
+    });
+    describe("Factory Function Resolution", () => {
+      test("should handle zero-length factory function specifically for line 170", async () => {
+        // Define a factory function that explicitly has length 0
+        const factory = function() { 
+          return { value: 'test' }; 
+        };
+        
+        // Ensure it's treated as a factory function, not a constructor
+        Object.setPrototypeOf(factory, Function.prototype);
+        factory.prototype = undefined;
+        
+        // Verify our setup
+        expect(factory.length).toBe(0);
+        expect(factory.prototype).toBeUndefined();
+        expect(typeof factory).toBe('function');
+        
+        // Register the component
+        container.register('zeroLengthFactory', factory);
+        
+        // Resolve and verify
+        const instance = await container.resolve('zeroLengthFactory');
+        expect(instance).toHaveProperty('value', 'test');
+      });
+    
+      test("should handle both zero and non-zero length factory functions", async () => {
+        // Zero parameter factory
+        const zeroParamFactory = function() { 
+          return { type: 'zero' }; 
+        };
+        Object.setPrototypeOf(zeroParamFactory, Function.prototype);
+        zeroParamFactory.prototype = undefined;
+        
+        // Factory with parameters
+        const withParamFactory = function(deps) { 
+          return { type: 'with-deps', deps }; 
+        };
+        Object.setPrototypeOf(withParamFactory, Function.prototype);
+        withParamFactory.prototype = undefined;
+        
+        // Register both
+        container.register('zeroParam', zeroParamFactory);
+        container.register('withParam', withParamFactory);
+        
+        // Test zero param factory
+        const zeroInstance = await container.resolve('zeroParam');
+        expect(zeroInstance.type).toBe('zero');
+        
+        // Test factory with params
+        const withParamInstance = await container.resolve('withParam');
+        expect(withParamInstance.type).toBe('with-deps');
+      });
+    });
   });
 });

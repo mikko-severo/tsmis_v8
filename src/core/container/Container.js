@@ -145,47 +145,45 @@ export class CoreContainer extends EventEmitter {
       return this.instances.get(name);
     }
   
+    // Resolve dependencies first
+    const deps = this.dependencies.get(name) || [];
+    const resolvedDeps = {};
+  
+    // Resolve each dependency
+    for (const dep of deps) {
+      resolvedDeps[dep] = await this.resolve(dep);
+    }
+  
     // Handle different component types
     let instance;
     if (typeof Component === 'function') {
       // If it's a class constructor
       if (Component.prototype) {
-        instance = new Component();
+        // Use dependencies in constructor if it expects them
+        instance = Component.length > 0 
+          ? new Component(resolvedDeps) 
+          : new Component();
       } 
       // If it's a factory function
       else {
-        instance = Component();
+        // Call factory with dependencies if it expects them
+        instance = Component.length > 0 
+          ? Component(resolvedDeps) 
+          : Component();
       }
     } else {
       // If it's already an instance
       instance = Component;
     }
   
-    // Cache singleton instance
-    if (options.singleton) {
-      this.instances.set(name, instance);
-    }
-  
-    // Resolve dependencies
-    const deps = this.dependencies.get(name);
-    const resolvedDeps = {};
-  
-    for (const dep of deps) {
-      resolvedDeps[dep] = await this.resolve(dep);
-    }
-  
-    // If the instance is a function that can be called with dependencies
-    if (typeof instance === 'function' && instance.length > 0) {
-      instance = instance(resolvedDeps);
-    }
-    // If the instance has a constructor that takes dependencies
-    else if (instance.constructor.length > 0) {
-      instance = new instance.constructor(resolvedDeps);
-    }
-  
     // Initialize if container is already initialized
     if (this.initialized && typeof instance.initialize === 'function') {
       await instance.initialize();
+    }
+  
+    // Cache singleton instance
+    if (options.singleton) {
+      this.instances.set(name, instance);
     }
   
     this.emit('component:resolved', { name, instance });
