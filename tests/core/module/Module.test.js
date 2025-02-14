@@ -3,7 +3,7 @@
 import { CoreModule, createModule } from "../../../src/core/module/Module.js";
 // import ModuleDefault from '../../../src/core/module/Module.js';
 import { ModuleError } from "../../../src/core/errors/index.js";
-import { EventEmitter } from "events";
+import { CoreEventBus } from "../../../src/core/event/EventBus.js";
 import assert from "assert";
 
 describe("CoreModule", () => {
@@ -23,7 +23,7 @@ describe("CoreModule", () => {
           errorHandlerCalls.push({ error, context });
         },
       },
-      eventBus: new EventEmitter(),
+      eventBus: new CoreEventBus (),
       config: {
         modules: {},
       },
@@ -366,7 +366,7 @@ describe("CoreModule", () => {
         errorSystem: {
           handleError: async () => {},
         },
-        eventBus: new EventEmitter(),
+        eventBus: new CoreEventBus(),
         config: {
           modules: {},
         },
@@ -505,7 +505,7 @@ describe("CoreModule", () => {
 
       const module = new CoreModule({
         errorSystem: mockErrorSystem,
-        eventBus: new EventEmitter(),
+        eventBus: new CoreEventBus(),
         config: {},
       });
 
@@ -542,7 +542,7 @@ describe("CoreModule", () => {
     test("should properly execute shutdown process", async () => {
       const module = new CoreModule({
         errorSystem: { handleError: async () => {} },
-        eventBus: new EventEmitter(),
+        eventBus: new CoreEventBus(),
         config: {},
       });
 
@@ -598,7 +598,7 @@ describe("CoreModule", () => {
 
       const module = new TestModule({
         errorSystem: { handleError: async () => {} },
-        eventBus: new EventEmitter(),
+        eventBus: new CoreEventBus(),
         config: {},
       });
 
@@ -622,7 +622,7 @@ describe("CoreModule", () => {
     test("getHealth should handle errors gracefully", async () => {
       const module = new CoreModule({
         errorSystem: { handleError: async () => {} },
-        eventBus: new EventEmitter(),
+        eventBus: new CoreEventBus(),
         config: {},
       });
 

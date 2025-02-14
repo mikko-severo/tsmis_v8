@@ -1,14 +1,17 @@
 // src/core/module/Module.js
 import { EventEmitter } from 'events';
+import { CoreEventBus } from '../event/EventBus.js';
 import { ModuleError, ValidationError } from '../errors/index.js';
+import { CoreEventBus } from '../event/EventBus.js';
 
 export class CoreModule extends EventEmitter {
-  static dependencies = ['errorSystem', 'eventBus', 'config'];
+  static dependencies = ['errorSystem', 'eventBusSystem', 'config'];
   static version = '1.0.0';
   
   constructor(deps = {}) {
     super();
     this.deps = deps;
+    this.eventBus = deps.eventBusSystem?.getEventBus();
     this.initialized = false;
     this.config = deps.config || {};
     
@@ -352,7 +355,12 @@ export function createModule(deps = {}) {
     errorSystem: {
       handleError: async () => {} // No-op error handler
     },
-    eventBus: new EventEmitter(), // Default event emitter
+    eventBusSystem: {
+      getEventBus: () => new CoreEventBus({ // Use CoreEventBus instead of EventEmitter
+        errorSystem: deps.errorSystem,
+        config: deps.config
+      })
+    },
     config: {} // Empty configuration object
   };
 

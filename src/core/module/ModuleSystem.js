@@ -5,7 +5,8 @@ import { CoreModule } from './Module.js';
 import { ModuleError, ValidationError } from '../errors/index.js';
 
 export class ModuleSystem extends EventEmitter {
-  static dependencies = ['errorSystem', 'eventBus', 'config'];
+   // Keep original dependencies since it needs the eventBus instance
+  static dependencies = ['errorSystem', 'eventBusSystem', 'config'];
 
   constructor(deps) {
     super();
@@ -36,11 +37,11 @@ export class ModuleSystem extends EventEmitter {
       );
     }
 
-    // Validate dependency interfaces
-    if (!this.deps.eventBus?.emit || !this.deps.eventBus?.on) {
+    // Update validation for eventBusSystem instead of eventBus
+    if (!this.deps.eventBusSystem?.getEventBus) {
       throw new ModuleError(
-        'INVALID_EVENTBUS',
-        'EventBus missing required methods'
+        'INVALID_EVENTBUS_SYSTEM',
+        'EventBusSystem missing required methods'
       );
     }
 
@@ -50,8 +51,19 @@ export class ModuleSystem extends EventEmitter {
         'ErrorSystem missing required methods'
       );
     }
+}
+  async emit(eventName, ...args) {
+    // Local EventEmitter emission
+    const localEmitResult = super.emit(eventName, ...args);
+    
+    // Use eventBusSystem for global events
+    if (this.deps.eventBusSystem) {
+      const eventBus = this.deps.eventBusSystem.getEventBus();
+      await eventBus.emit(eventName, ...args);
+    }
+    
+    return localEmitResult;
   }
-
   async register(name, ModuleClass, config = {}) {
     if (!(ModuleClass.prototype instanceof CoreModule)) {
       throw new ValidationError(
@@ -332,7 +344,9 @@ export function createModuleSystem(deps = {}) {
       errorSystem: {
         handleError: async () => {} // No-op error handler
       },
-      eventBus: new EventEmitter(), // Default event emitter
+      eventBusSystem: {
+        getEventBus: () => new EventEmitter() // Default eventBus provider
+      },
       config: {} // Empty configuration object
     };
   

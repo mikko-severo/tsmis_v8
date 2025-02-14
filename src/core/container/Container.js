@@ -190,14 +190,14 @@ export class CoreContainer extends EventEmitter {
         'Container is already initialized'
       );
     }
-    console.log('Initializing Container...');
+    //console.log('Initializing Container...');
     const order = this.resolveDependencyOrder();
 
     for (const name of order) {
-      console.log(`Resolving component: ${name}`);
+      //console.log(`Resolving component: ${name}`);
       const instance = await this.resolve(name);
       if (typeof instance.initialize === 'function') {
-        console.log(`Initializing component: ${name}`);
+        //console.log(`Initializing component: ${name}`);
         await instance.initialize();
       }
     }
@@ -228,7 +228,9 @@ export class CoreContainer extends EventEmitter {
 
       visiting.add(name);
       
+      const component = this.components.get(name);
       const deps = this.dependencies.get(name) || [];
+      
       for (const dep of deps) {
         if (!this.components.has(dep)) {
           throw new ConfigError(
@@ -244,8 +246,25 @@ export class CoreContainer extends EventEmitter {
       order.push(name);
     };
 
+    // Ensure core systems are initialized first
+    const initOrder = [
+      'errorSystem',
+      'config',
+      'eventBusSystem',
+      'moduleSystem'
+    ];
+
+    for (const name of initOrder) {
+      if (this.components.has(name)) {
+        visit(name);
+      }
+    }
+
+    // Then handle any remaining components
     for (const name of this.components.keys()) {
-      visit(name);
+      if (!order.includes(name)) {
+        visit(name);
+      }
     }
 
     return order;
