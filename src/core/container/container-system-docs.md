@@ -14,7 +14,8 @@
 
 ## Overview
 
-The CoreContainer System is a sophisticated Dependency Injection (DI) and Inversion of Control (IoC) container designed to manage component lifecycles, dependencies, and system initialization.
+The CoreContainer System is a sophisticated Dependency Injection (DI) and Inversion of Control (IoC) container designed to manage component lifecycles, dependencies, and system initialization. It is responsible for managing the lifecycle and dependencies of the core systems and components in the application, including the ErrorSystem, ModuleSystem, and other registered components.
+
 
 ## Purpose
 
@@ -144,6 +145,47 @@ container.registerManifest('service', {
 
 // Discover components based on the manifest
 await container.discover('service', './services');
+```
+
+### Initialization Process
+
+The `CoreContainer.initialize` method is responsible for initializing the registered components in the correct dependency order. It performs the following steps:
+
+1. Resolves the dependency order of the registered components.
+2. Iterates over the components in the resolved order.
+3. Resolves each component using the `CoreContainer.resolve` method.
+4. If the resolved component has an `initialize` method, it calls component.initialize() to initialize the component.
+
+During this process, the `ErrorSystem`, `ModuleSystem`, and any other registered components that have an initialize method are initialized
+
+### Shutdown Process
+
+The `CoreContainer.shutdown` method is responsible for shutting down the initialized components in the reverse dependency order. It performs the following steps:
+
+1. Resolves the dependency order of the initialized components.
+2. Iterates over the components in the reverse order.
+3. If the component has a `shutdown` method, it calls component.shutdown() to shut down the component.
+
+During this process, the `ErrorSystem`, `ModuleSystem`, and any other initialized components with a shutdown method are properly shut down.
+
+### Component Registration
+
+Components, including the core systems like `ErrorSystem` and `ModuleSystem`, are registered with the `CoreContainer` using the `CoreContainer.register` method. The registration process involves providing a unique name for the component and either a constructor function or a factory function that creates an instance of the component.
+
+The `ErrorSystem` and `ModuleSystem` are typically registered as factory functions in the buildApp function of src/app.js
+
+```javascript
+const errorSystemFactory = () => {
+  return createErrorSystem({
+    logger: console
+  });
+};
+container.register('errorSystem', errorSystemFactory);
+
+const moduleSystemFactory = (deps) => {
+  return createModuleSystem(deps);
+};
+container.register('moduleSystem', moduleSystemFactory);
 ```
 
 ## Advanced Features

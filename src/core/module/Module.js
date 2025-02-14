@@ -11,7 +11,7 @@ export class CoreModule extends EventEmitter {
     super();
     this.deps = deps;
     this.initialized = false;
-    this.config = null;
+    this.config = deps.config || {};
     this.state = {
       status: 'created',
       startTime: null,

@@ -5,6 +5,7 @@ import Fastify from 'fastify';
 import { CoreContainer } from './core/container/Container.js';
 import { ErrorSystem, createErrorSystem } from './core/errors/ErrorSystem.js';
 import { setupErrorHandler } from './core/errors/integrations/fastify/handler.js';
+import { ModuleSystem, createModuleSystem } from './core/module/ModuleSystem.js';
 
 export async function buildApp() {
   // Create the core container
@@ -19,6 +20,13 @@ export async function buildApp() {
   
   // Register as a factory function
   container.register('errorSystem', errorSystemFactory);
+
+    // Create and register module system 
+    const moduleSystemFactory = (deps) => {
+      return createModuleSystem(deps);
+    };
+  
+    container.register('moduleSystem', moduleSystemFactory);
 
   // Create Fastify instance with error serialization
   const fastify = Fastify({
@@ -44,7 +52,8 @@ export async function buildApp() {
     console.error('Container initialization error:', error);
     throw error;
   }
-
+// const moduleSystem = await container.resolve('moduleSystem');
+// await moduleSystem.initialize();
   // Basic route as a health check
   fastify.get('/', async (request, reply) => {
     return { 

@@ -199,18 +199,22 @@ export class CoreContainer extends EventEmitter {
         'Container is already initialized'
       );
     }
-
+    console.log('Initializing Container...');
     const order = this.resolveDependencyOrder();
 
     for (const name of order) {
+      console.log(`Resolving component: ${name}`);
       const instance = await this.resolve(name);
       if (typeof instance.initialize === 'function') {
+        console.log(`Initializing component: ${name}`);
         await instance.initialize();
       }
     }
 
     this.initialized = true;
     this.emit('initialized');
+
+    
   }
 
   /**

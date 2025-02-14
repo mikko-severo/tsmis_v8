@@ -8,17 +8,18 @@
 5. [Service Systems](#service-systems)
 6. [Business Modules](#business-modules)
 7. [Integration Patterns](#integration-patterns)
-8. [Lifecycle Management](#lifecycle-management)
+8. [State Management](#state-management)
 9. [Error Handling](#error-handling)
 10. [Event System](#event-system)
-11. [Testing Strategy](#testing-strategy)
-12. [Best Practices](#best-practices)
-13. [Troubleshooting](#troubleshooting)
+11. [Health Monitoring](#health-monitoring)
+12. [Testing Strategy](#testing-strategy)
+13. [Best Practices](#best-practices)
+14. [Troubleshooting](#troubleshooting)
 
 ## Overview
 
 The TSMIS architecture is built on three main layers:
-1. Core Systems - Fundamental infrastructure 
+1. Core Systems - Fundamental infrastructure (Container, ErrorSystem, ModuleSystem)
 2. Service Systems - Common service functionality
 3. Business Modules - Business domain logic
 
@@ -27,16 +28,17 @@ The TSMIS architecture is built on three main layers:
 ### Architectural Principles
 - Clear separation of concerns
 - Infrastructure/business logic separation
-- Domain-driven design
 - Event-driven communication
 - Dependency injection
+- State management
 
 ### Key Features
-- Containerized core systems
-- Service encapsulation
-- Business domain isolation
-- Cross-cutting concerns management
+- Core dependencies management
+- Module lifecycle control
+- Standardized error handling
+- Dual event emission (local + bus)
 - Health monitoring
+- Metrics tracking
 
 ## System Architecture
 
@@ -48,330 +50,236 @@ graph TB
     CC --> EB[EventBus]
     CC --> CFG[ConfigSystem]
 
-    %% ModuleSystem managing business modules
-    MS --> HR[HR Module]
-    MS --> SALES[Sales Module]
-    MS --> WIKI[Wiki Module]
-    MS --> INV[Inventory Module]
-
-    %% Core module dependencies
-    HR --> ES
-    HR --> EB
-    HR --> CFG
-
-    SALES --> ES
-    SALES --> EB
-    SALES --> CFG
-
-    WIKI --> ES
-    WIKI --> EB
-    WIKI --> CFG
-
-    INV --> ES
-    INV --> EB
-    INV --> CFG
-
-    %% Service systems would be registered with container
-    CC --> DBS[DatabaseSystem]
-    CC --> AS[AuthSystem]
-    CC --> FS[FileSystem]
-
-    %% Service system dependencies would be injected into modules that need them
-    HR -.-> DBS
-    HR -.-> AS
-    HR -.-> FS
-
-    SALES -.-> DBS
-    SALES -.-> AS
-
-    %% Event communication
-    EB -.-> HR
-    EB -.-> SALES
-    EB -.-> WIKI
-    EB -.-> INV
-```
-
-### Detailed Service Integration
-
-```mermaid
-graph TB
-    subgraph BusinessModule[Business Module]
-        BM[HR Module]
-        BL[Business Logic]
-    end
-    
-    subgraph ServiceSystems[Service Systems]
-        DBS[DatabaseSystem]
-        AS[AuthSystem]
-        FS[FileSystem]
-        EMS[EmailSystem]
+    %% Core Module Structure
+    subgraph CoreModule[Core Module]
+        ST[State Management] --> EM[Event Management]
+        ST --> EH[Error Handling]
+        ST --> HM[Health Monitoring]
+        ST --> MT[Metrics Tracking]
+        
+        EM --> LE[Local Events]
+        EM --> BE[Bus Events]
     end
 
-    BM --> BL
-    BL --> DBS
-    BL --> AS
-    BL --> FS
-    BL --> EMS
+    %% Core Dependencies
+    CoreModule --> ES
+    CoreModule --> EB
+    CoreModule --> CFG
 
-    subgraph CrossCutting[Cross-cutting]
-        ES[ErrorSystem]
-        EB[EventBus]
+    %% State Flow
+    subgraph States[Module States]
+        Created --> Initializing
+        Initializing --> Running
+        Running --> ShuttingDown
+        ShuttingDown --> Shutdown
+        Running --> Error
+        Initializing --> Error
     end
-
-    ES -.-> BM
-    EB -.-> BM
 ```
 
 ## Core Systems
 
 ### ModuleSystem
 ```javascript
-// Module registration
-await moduleSystem.register('hrModule', HRModule, {
-  config: moduleConfig
-});
+class ModuleSystem extends EventEmitter {
+  static dependencies = ['errorSystem', 'eventBus'];
 
-// Module discovery
-await moduleSystem.discover('./modules');
+  async register(name, Module, config = {}) {
+    // Module registration logic
+  }
+
+  async resolve(name) {
+    // Module resolution logic
+  }
+}
 ```
 
-### ErrorSystem
+### CoreModule Base Class
 ```javascript
-// Error handling in modules
-try {
-  await this.processEmployee(data);
-} catch (error) {
-  await this.deps.errorSystem.handleError(error, {
-    module: 'hrModule',
-    operation: 'processEmployee',
-    data
+class CoreModule extends EventEmitter {
+  static dependencies = ['errorSystem', 'eventBus', 'config'];
+  static version = '1.0.0';
+
+  constructor(deps = {}) {
+    super();
+    this.deps = deps;
+    this.initialized = false;
+    this.config = deps.config || {};
+    this.state = {
+      status: 'created',
+      startTime: null,
+      errors: [],
+      metrics: new Map()
+    };
+  }
+}
+```
+
+## State Management
+
+### Module States
+- created: Initial module state
+- initializing: During initialization process
+- running: Module is active
+- shutting_down: During shutdown process
+- shutdown: Module is inactive
+- error: Error state
+
+### State Tracking
+```javascript
+this.state = {
+  status: 'created',
+  startTime: null,
+  errors: [],
+  metrics: new Map()
+};
+```
+
+## Error Handling
+
+### Error Management
+```javascript
+async handleError(error, context = {}) {
+  const safeContext = context || {};
+
+  this.state.errors.push({
+    timestamp: new Date().toISOString(),
+    error: error.message,
+    context: safeContext
+  });
+
+  if (this.state.errors.length > 100) {
+    this.state.errors.shift();
+  }
+
+  if (this.deps.errorSystem) {
+    await this.deps.errorSystem.handleError(error, {
+      module: this.constructor.name,
+      ...safeContext
+    });
+  }
+}
+```
+
+## Event System
+
+### Dual Event Emission
+```javascript
+async emit(eventName, ...args) {
+  // Local EventEmitter emission
+  const localEmitResult = super.emit(eventName, ...args);
+  
+  // EventBus broadcast
+  if (this.deps.eventBus?.emit) {
+    await this.deps.eventBus.emit(eventName, ...args);
+  }
+  
+  return localEmitResult;
+}
+```
+
+## Health Monitoring
+
+### Health Check Implementation
+```javascript
+async getHealth() {
+  return {
+    name: this.constructor.name,
+    version: this.constructor.version,
+    status: this.state.status,
+    uptime: this.state.startTime ? Date.now() - this.state.startTime : 0,
+    initialized: this.initialized,
+    errorCount: this.state.errors.length,
+    lastError: this.state.errors[this.state.errors.length - 1],
+    metrics: Object.fromEntries(this.state.metrics)
+  };
+}
+```
+
+### Metrics Recording
+```javascript
+recordMetric(name, value) {
+  this.state.metrics.set(name, {
+    value,
+    timestamp: Date.now()
   });
 }
 ```
 
-### EventBus
+## Module Lifecycle
+
+### Initialization
 ```javascript
-// Event broadcasting
-await this.deps.eventBus.emit('employee:created', {
-  id: employee.id,
-  department: employee.department
-});
-```
-
-## Service Systems
-
-### DatabaseSystem
-```javascript
-class DatabaseSystem {
-  async query(sql, params) {
-    // Database operations
+async initialize() {
+  if (this.initialized) {
+    throw new ModuleError('ALREADY_INITIALIZED', 'Module is already initialized');
   }
-  
-  async transaction(callback) {
-    // Transaction handling
-  }
-}
-```
 
-### AuthSystem
-```javascript
-class AuthSystem {
-  async authenticate(credentials) {
-    // Authentication logic
-  }
-  
-  async authorize(user, resource, action) {
-    // Authorization logic
-  }
-}
-```
+  try {
+    this.state.startTime = Date.now();
+    this.state.status = 'initializing';
 
-### FileSystem
-```javascript
-class FileSystem {
-  async store(path, content, metadata) {
-    // File operations
-  }
-  
-  async retrieve(path) {
-    // File retrieval
-  }
-}
-```
-
-## Business Modules
-
-### Business Module File Structure
-
-A typical business module follows this file structure:
-
-```
-modules/accounting/
-├── index.js         # Module definition & setup
-├── config.js        # Module config
-├── errors/          # Module specific errors
-├── services/        # Business logic 
-├── routes/          # API routes
-├── plugins/         # Special tools or features to the specific module
-└── schemas/         # Validation schemas
-```
-
-- `index.js`: Contains the module class definition and setup code.
-- `config.js`: Holds the module-specific configuration.
-- `errors/`: Contains module-specific error classes.
-- `services/`: Encapsulates the business logic and interactions with other services.
-- `routes/`: Defines the API routes handled by the module.
-- `plugins/`: Contains special tools or features specific to the module.
-- `schemas/`: Holds validation schemas for the module's data.
-
-### Module Implementation
-```javascript
-class HRModule extends CoreModule {
-  static dependencies = ['database', 'auth', 'file', 'email'];
-
-  async processEmployee(data) {
-    // Use service systems through dependencies
-    await this.deps.database.transaction(async (tx) => {
-      await this.deps.auth.authorize('employee.create');
-      const employee = await tx.createEmployee(data);
-      await this.deps.file.store(`employees/${employee.id}`, data.documents);
-      await this.deps.email.send('welcome', employee.email);
-    });
-  }
-}
-```
-
-### Module Configuration
-```javascript
-{
-  "modules": {
-    "hrModule": {
-      "enabled": true,
-      "config": {
-        "employeeDefaults": {
-          "department": "unassigned",
-          "status": "pending"
-        },
-        "documentTypes": ["id", "contract", "certificates"]
-      }
-    }
-  }
-}
-```
-
-## Integration Patterns
-
-### Service Integration
-```javascript
-class SalesModule extends CoreModule {
-  async createOrder(orderData) {
-    // Database integration
-    const order = await this.deps.database.query(
-      'INSERT INTO orders...'
+    await this.onConfigure();
+    await this.setupEventHandlers();
+    await this.onInitialize();
+    
+    this.initialized = true;
+    this.state.status = 'running';
+  } catch (error) {
+    this.state.status = 'error';
+    throw new ModuleError('INITIALIZATION_FAILED', 'Failed to initialize module',
+      { originalError: error }
     );
-
-    // File storage integration
-    await this.deps.file.store(
-      `orders/${order.id}`, 
-      orderData.documents
-    );
-
-    // Email integration
-    await this.deps.email.send(
-      'order-confirmation',
-      order.customerEmail
-    );
-
-    // Event emission
-    await this.deps.eventBus.emit('order:created', order);
   }
 }
 ```
 
-### Cross-module Communication
+### Shutdown
 ```javascript
-// Inventory module listening to Sales events
-class InventoryModule extends CoreModule {
-  getEventHandlers() {
-    return {
-      'order:created': this.updateStock.bind(this)
-    };
-  }
+async shutdown() {
+  if (!this.initialized) return;
 
-  async updateStock(orderEvent) {
-    await this.deps.database.transaction(async (tx) => {
-      // Update inventory
-    });
-  }
-}
-```
-
-## Lifecycle Management
-
-### Module Lifecycle
-```javascript
-class WikiModule extends CoreModule {
-  async initialize() {
-    // Setup database tables
-    await this.deps.database.query(`
-      CREATE TABLE IF NOT EXISTS wiki_pages...
-    `);
-
-    // Initialize search index
-    await this.initializeSearch();
-  }
-
-  async shutdown() {
-    // Cleanup resources
-    await this.cleanupTempFiles();
+  try {
+    this.state.status = 'shutting_down';
+    await this.onShutdown();
+    
+    this.initialized = false;
+    this.state.status = 'shutdown';
+    this.state.startTime = null;
+  } catch (error) {
+    this.state.status = 'error';
+    throw new ModuleError('SHUTDOWN_FAILED', 'Failed to shutdown module',
+      { originalError: error }
+    );
   }
 }
 ```
 
 ## Testing Strategy
 
-### Unit Testing
+### Module Testing
 ```javascript
-describe('HR Module', () => {
-  let hrModule;
+describe('CoreModule', () => {
+  let module;
   let mockDeps;
 
   beforeEach(() => {
     mockDeps = {
-      database: createMockDatabase(),
-      auth: createMockAuth(),
-      file: createMockFileSystem(),
-      email: createMockEmailSystem()
+      errorSystem: {
+        handleError: jest.fn()
+      },
+      eventBus: {
+        emit: jest.fn()
+      },
+      config: {}
     };
-    hrModule = new HRModule(mockDeps);
+    module = new CoreModule(mockDeps);
   });
 
-  test('should process employee', async () => {
-    await hrModule.processEmployee(employeeData);
-    expect(mockDeps.database.query).toHaveBeenCalled();
-  });
-});
-```
-
-### Integration Testing
-```javascript
-describe('Module Integration', () => {
-  let container;
-
-  beforeAll(async () => {
-    container = new CoreContainer();
-    
-    // Register systems
-    container.register('database', createDatabaseSystem);
-    container.register('moduleSystem', createModuleSystem);
-    
-    await container.initialize();
-  });
-
-  test('should handle complete business flow', async () => {
-    const hrModule = await container.resolve('hrModule');
-    await hrModule.processEmployee(testData);
-    // Verify results
+  test('should handle initialization', async () => {
+    await module.initialize();
+    expect(module.initialized).toBe(true);
+    expect(module.state.status).toBe('running');
   });
 });
 ```
@@ -379,39 +287,43 @@ describe('Module Integration', () => {
 ## Best Practices
 
 ### 1. Module Implementation
-- Focus on business logic
-- Use service systems for infrastructure
-- Handle errors appropriately
-- Emit relevant events
-- Implement health checks
+- Validate dependencies in constructor
+- Implement lifecycle hooks (onConfigure, onInitialize, onShutdown)
+- Handle errors through errorSystem
+- Record meaningful metrics
+- Maintain clean state transitions
 
-### 2. Service Usage
-- Access through dependencies
-- Use transactions where needed
-- Handle service errors
-- Monitor service health
+### 2. Error Handling
+- Use ModuleError for module-specific errors
+- Provide meaningful error contexts
+- Limit error history to prevent memory issues
+- Forward errors to errorSystem when available
 
-### 3. Testing
-- Mock service dependencies
-- Test business logic
-- Verify service integration
-- Test error scenarios
-- Check event handling
+### 3. Event Handling
+- Use setupEventHandlers for event subscription
+- Leverage dual event emission appropriately
+- Handle event errors properly
+
+### 4. Health Monitoring
+- Implement meaningful health checks
+- Record relevant metrics
+- Maintain accurate state information
+- Track error history
 
 ## Troubleshooting
 
 ### Common Issues
-1. Service Dependencies
-   - Check service availability
-   - Verify service configuration
-   - Monitor service health
+1. Initialization Failures
+   - Check dependency validation
+   - Verify configuration
+   - Review initialization hooks
 
-2. Business Logic
-   - Debug module initialization
-   - Check business rules
-   - Verify data flow
+2. State Management
+   - Verify state transitions
+   - Check metric recording
+   - Monitor error history
 
-3. Integration Issues
-   - Check service connectivity
-   - Verify event flow
-   - Debug cross-module communication
+3. Event Handling
+   - Debug local event emission
+   - Verify eventBus connectivity
+   - Check event handler registration
