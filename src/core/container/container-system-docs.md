@@ -61,6 +61,7 @@ graph TD
 - Components can be registered with optional configuration
 - Supports singleton and transient component modes
 - Tracks component dependencies
+- Supports class and factory function registration
 
 ### Dependency Resolution
 
@@ -75,6 +76,11 @@ graph TD
 - Supports component-specific initialization logic
 - Graceful shutdown with error handling
 
+### Component Discovery
+
+- Supports component discovery through manifest registration
+- Allows for dynamic component loading based on manifests
+
 ## Installation
 
 ```bash
@@ -88,226 +94,80 @@ npm install @your-org/core-container-system
 ```javascript
 import { CoreContainer } from '@your-org/core-container-system';
 
-class LoggerService {
-  async initialize() {
-    console.log('Logger initialized');
-  }
-}
+// Class registration
+class LoggerService {}
 
-class DatabaseService {
-  static dependencies = ['logger'];
-
-  constructor(deps) {
-    this.logger = deps.logger;
-  }
-
-  async initialize() {
-    this.logger.log('Connecting to database');
-    // Database connection logic
-  }
-
-  async shutdown() {
-    // Close database connection
-  }
-}
-
-const container = new CoreContainer();
-
-// Register components
 container.register('logger', LoggerService);
-container.register('database', DatabaseService);
 
-// Initialize all components
-await container.initialize();
+// Factory function registration
+const createDatabaseService = (deps) => {
+  return {
+    query: () => { /* ... */ }
+  };
+};
+
+container.register('database', createDatabaseService);
+```
+
+### Singleton vs Transient Components
+
+```javascript
+// Singleton registration (default)
+container.register('service', ServiceClass);
+
+// Transient registration
+container.register('repository', RepositoryClass, { singleton: false });
 ```
 
 ### Advanced Dependency Injection
 
 ```javascript
 class AuthService {
-  static dependencies = ['database', 'logger'];
-
   constructor(deps) {
     this.database = deps.database;
     this.logger = deps.logger;
-  }
-
-  async authenticate(credentials) {
-    this.logger.log('Authentication attempt');
-    // Authentication logic
   }
 }
 
 container.register('auth', AuthService);
 ```
 
-### Dependency Resolution
-
-The CoreContainer uses a sophisticated dependency resolution mechanism:
-
-#### Key Resolution Strategies
-- Automatically resolves and injects dependencies
-- Supports complex dependency graphs
-- Prevents circular dependencies
-- Ensures correct initialization order
-
-#### Dependency Resolution Algorithm
-
-```mermaid
-graph TD
-    A[Start Dependency Resolution] --> B{Analyze Component Dependencies}
-    B --> |Topological Sorting| C[Resolve Dependency Order]
-    C --> D{Check for Circular Dependencies}
-    D --> |Circular Detected| E[Throw ConfigError]
-    D --> |No Circularity| F[Create Dependency Injection Map]
-    F --> G[Initialize Components in Order]
-```
-
-#### Circular Dependency Prevention
+### Component Discovery with Manifests
 
 ```javascript
-resolveDependencyOrder() {
-  const visited = new Set();
-  const visiting = new Set();
-  const order = [];
-
-  const visit = (name) => {
-    if (visited.has(name)) return;
-    if (visiting.has(name)) {
-      throw new ConfigError(
-        'CIRCULAR_DEPENDENCY',
-        `Circular dependency detected: ${name}`
-      );
-    }
-
-    visiting.add(name);
-    
-    const deps = this.dependencies.get(name) || [];
-    for (const dep of deps) {
-      visit(dep);
-    }
-    
-    visiting.delete(name);
-    visited.add(name);
-    order.push(name);
-  };
-
-  for (const name of this.components.keys()) {
-    visit(name);
+// Register a component manifest
+container.registerManifest('service', {
+  configSchema: {
+    /* ... */
   }
+});
 
-  return order;
-}
-```
-
-#### Complex Dependency Example
-
-```javascript
-class DatabaseService {
-  static dependencies = ['logger', 'configManager'];
-  // ...
-}
-
-class AuthService {
-  static dependencies = ['database', 'logger'];
-  // ...
-}
-
-class UserService {
-  static dependencies = ['database', 'auth'];
-  // ...
-}
-
-// CoreContainer will resolve in correct order:
-// 1. Logger
-// 2. ConfigManager
-// 3. Database
-// 4. Auth
-// 5. User Services
+// Discover components based on the manifest
+await container.discover('service', './services');
 ```
 
 ## Advanced Features
 
 ### Event Handling
 
-The CoreContainer emits events during key lifecycle stages:
-
 ```javascript
-container.on('component:registered', ({ name, Component }) => {
+container.on('component:registered', ({ name, component }) => {
   console.log(`Component ${name} registered`);
-});
-
-container.on('initialized', () => {
-  console.log('All components initialized');
-});
-```
-
-### Component Registration Flexibility
-
-The CoreContainer supports multiple component registration styles:
-
-```javascript
-// Class Constructor
-container.register('service', MyService);
-
-// Factory Function
-container.register('service', () => new MyService());
-
-// Existing Instance
-container.register('service', myServiceInstance);
-
-// With Singleton/Transient Options
-container.register('service', MyService, { 
-  singleton: true,  // Default behavior
-  singleton: false  // Create new instance each time
 });
 ```
 
 ### Dependency Injection Modes
 
-1. **Constructor Injection**
-```javascript
-class DatabaseService {
-  constructor(deps) {
-    this.logger = deps.logger;
-  }
-}
-```
-
-2. **Factory Function Injection**
-```javascript
-const createAuthService = (deps) => {
-  return {
-    login: () => {
-      deps.logger.log('Login attempt');
-    }
-  };
-};
-```
-
-### Advanced Resolution Strategies
-
-- Supports multiple component definition styles
-- Automatic dependency resolution
-- Lazy initialization
-- Singleton instance caching
-- Dynamic dependency injection
-
-
-### Dependency Tracking
-
-- Dynamic dependency tracking
-- Supports optional and required dependencies
-- Provides detailed dependency graphs
-- Enables lazy loading of components
+- Constructor injection
+- Factory function injection
 
 ## Best Practices
 
 1. Declare component dependencies explicitly
-2. Keep components loosely coupled
-3. Use dependency injection for better testability
-4. Implement `initialize()` and `shutdown()` methods
-5. Avoid complex initialization logic
+2. Use interfaces for dependency contracts
+3. Register components with clear names
+4. Use singleton components judiciously
+5. Handle initialization and shutdown properly
 
 ## Extending the System
 
@@ -325,31 +185,49 @@ class CustomComponent {
 }
 ```
 
+### Custom Component Discovery
+
+```javascript
+container.registerManifest('repository', {
+  configSchema: {
+    /* ... */
+  },
+  async discover(container) {
+    // Custom discovery logic
+  }
+});
+```
+
 ## Troubleshooting
 
 ### Common Issues
 
-- **Circular Dependencies**: Carefully manage component dependencies
-- **Initialization Order**: Ensure correct dependency declaration
-- **Error Handling**: Implement robust error handling in component methods
+- Circular dependencies
+- Incorrect component registration
+- Missing dependencies during resolution
+
+### Debugging Tips
+
+- Use `container.on('error', ...)` to catch container errors
+- Inspect the container's `components` and `dependencies` maps
+- Use `container.resolve(name)` to manually resolve components
 
 ## Limitations
 
-- Does not support dynamic component registration after initialization
-- Requires explicit dependency declaration
-- Limited to single-instance dependency injection
+- No support for dynamic component replacement
+- Limited support for async factory functions
+- No built-in support for scoped containers
 
 ## Future Roadmap
 
-- [ ] Dynamic component registration
-- [ ] Nested container support
-- [ ] More advanced dependency resolution
-- [ ] Enhanced error handling
-- [ ] Performance optimizations
+- [ ] Async component initialization
+- [ ] Scoped container support
+- [ ] Dynamic component replacement
+- [ ] Improved error handling and diagnostics
 
 ## Contributing
 
-Guidelines for contributing to the CoreContainer System will be added in future versions.
+Contributions are welcome! Please follow the guidelines in CONTRIBUTING.md.
 
 ## License
 

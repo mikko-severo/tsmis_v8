@@ -1,47 +1,25 @@
 # Toro_SM Information System - Technical Documentation
-Version 1.0.0
+Version 1.1.0
 
 ## Table of Contents
-0. [Universal Error System](#0-universal-error-system)
 1. [System Overview](#1-system-overview)
-2. [System Architecture](#2-system-architecture)
+2. [System Architecture](#2-system-architecture) 
 3. [Core Components](#3-core-components)
-4. [Module System](#4-module-system)
-5. [Event-Driven Communication](#5-event-driven-communication)
-6. [Database Architecture](#6-database-architecture)
-7. [API Layer](#7-api-layer)
-8. [Security](#8-security)
-9. [Development & Deployment](#9-development--deployment)
-10. [Directory Structure](#10-directory-structure)
-
-## 0. Universal Error System
+   - [Container (Dependency Injection)](#container-dependency-injection)
+   - [Error System](#error-system)
+   - [Module System](#module-system)
+4. [Error Types](#4-error-types)
+5. [Framework Integration](#5-framework-integration)
+6. [Module Lifecycle](#6-module-lifecycle)
+7. [Event-Driven Communication](#7-event-driven-communication)
+8. [Database Architecture](#8-database-architecture)
+9. [API Layer](#9-api-layer)
+10. [Security](#10-security)
+11. [Development & Deployment](#11-development--deployment)
+12. [Directory Structure](#12-directory-structure)
 
 ## 1. System Overview
-
-### Introduction
-Toro_SM is a comprehensive information system built on a hybrid modular architecture, combining a monolithic core with event-driven services. The system integrates various enterprise functionalities including Accounting, CRM, HR, Scheduling, Inventory, and more.
-
-### Key Features
-- Modular, event-driven system architecture
-- Real-time data processing and updates
-- Cross-module communication via event bus
-- Integrated caching system
-- Comprehensive security features
-- SSR with Marko.js for optimal performance
-- Hot Module Replacement with Vite
-
-### Business Modules
-- Accounting System
-- Wiki System (Knowledge Base)
-- Scheduling System (Teams, Staff, Equipment)
-- Documentation System
-- Inventory Management
-- Project Management
-- R&D System
-- Forms Management
-- Sales System
-- CRM
-- Human Resources
+Toro_SM is an enterprise information system built on a hybrid modular architecture. It combines a modular core with event-driven services to provide various business functionalities.
 
 ## 2. System Architecture
 
@@ -55,14 +33,15 @@ graph TB
     
     subgraph Core Layer
         API[API Gateway]
-        Auth[Authentication]
-        Events[Event Bus]
-        Cache[Cache Manager]
+        CONT[Container]
+        ERR[Error System]
+        MOD[Module System]
+        EVT[Event Bus]
     end
     
-    subgraph module Layer
+    subgraph Module Layer
         ACC[Accounting]
-        HR[HR System]
+        HR[HR System] 
         INV[Inventory]
         CRM[CRM]
         WIKI[Wiki]
@@ -73,512 +52,155 @@ graph TB
     subgraph Data Layer
         DB[(PostgreSQL)]
         CACHE[(Redis)]
-        MQ[RabbitMQ]
     end
 
     UI --> SSR
     SSR --> API
-    API --> Auth
-    Auth --> Events
-    Events --> Service Layer
-    Service Layer --> Cache
-    Cache --> Data Layer
+    API --> CONT
+    CONT --> ERR
+    CONT --> MOD
+    CONT --> EVT
+    MOD --> Module Layer
+    Module Layer --> Data Layer
 ```
-
-### Key Components Table
-| Component | Technology | Purpose |
-|-----------|------------|----------|
-| Frontend | Marko.js | SSR, UI Components |
-| Build Tool | Vite | Development, Bundling |
-| API Layer | Fastify | HTTP Interface |
-| Event Bus | RabbitMQ | Inter-module Communication |
-| Database | PostgreSQL | Primary Data Store |
-| Cache | Redis | Performance Optimization |
 
 ## 3. Core Components
 
 ### Container (Dependency Injection)
-The DI container manages component lifecycle and dependencies:
+The Container manages component lifecycle and dependencies:
 
 ```javascript
-class Container {
-  // Core functionality
-  async register(name, component)
+class CoreContainer {
+  async register(name, component, options)
   async resolve(name)
   async initialize()
   async shutdown()
 }
 ```
 
-### Module System
-Base module structure for all business modules:
+### Error System
+The Error System standardizes error handling:
 
 ```javascript
-class Module {
-  static dependencies = [];
-  
+class ErrorSystem {
+  async initialize()
+  registerIntegration(framework, options)
+  createError(type, code, message, details, options)
+  async handleError(error, context)
+}
+```
+
+It defines a CoreError base class:
+
+```javascript
+class CoreError extends Error {
+  constructor(code, message, details, options)
+  toJSON()
+  static fromJSON(data)  
+}
+```
+
+And several specialized error types:
+- AccessError
+- AuthError
+- ConfigError
+- ModuleError
+- NetworkError
+- ServiceError
+- ValidationError
+
+### Module System
+The Module system provides the base class for business modules:
+
+```javascript
+class CoreModule extends EventEmitter {
   constructor(deps)
   async initialize()
-  async registerRoutes()
-  async handleEvent(event)
+  async onConfigure()
+  async setupEventHandlers() 
+  async onInitialize()
+  async handleError(error, context)
+  async emit(eventName, args)
+  async shutdown()  
 }
 ```
 
-### Registry
-Manages module discovery and registration:
+## 4. Error Types
+The Error System defines several specialized error types:
+
+- **AccessError**: Authorization and access control errors
+- **AuthError**: Authentication errors
+- **ConfigError**: Configuration errors
+- **ModuleError**: Module system and initialization errors
+- **NetworkError**: Network related errors
+- **ServiceError**: Service level errors
+- **ValidationError**: Input validation errors
+
+## 5. Framework Integration
+The Error System integrates with the Fastify framework through the FastifyIntegration:
 
 ```javascript
-class Registry {
-  async discover(path)
-  async register(module)
-  async initialize()
+class FastifyIntegration extends IFrameworkIntegration {
+  async initialize(fastify, options)
+  mapError(error)
+  serializeError(error, context)
 }
 ```
 
-### Event Bus
-Handles inter-module communication:
+It maps Fastify errors to core error types and serializes errors for API responses.
+
+## 6. Module Lifecycle
+Business modules extend the CoreModule class and implement lifecycle methods:
 
 ```javascript
-class EventBus {
-  async publish(topic, data)
-  async subscribe(topic, handler)
-  async initialize()
+class HRModule extends CoreModule {
+  async onConfigure()
+  async setupEventHandlers()
+  async onInitialize() 
+  async handleError(error, context)
+  async shutdown()
 }
 ```
 
-## 4. Module System
+Key lifecycle events include:
+- Configuration
+- Event handler setup
+- Initialization
+- Error handling
+- Shutdown
 
-### Module Lifecycle
-1. Registration
-2. Dependency Resolution
-3. Initialization
-4. Route Registration
-5. Event Handler Registration
-6. Runtime Operation
-7. Shutdown
+## 7. Event-Driven Communication
+Modules communicate via events emitted through the EventBus.
 
-### Module Integration
-```mermaid
-sequenceDiagram
-    participant Registry
-    participant Container
-    participant Module
-    participant EventBus
-    
-    Registry->>Container: Register Module
-    Container->>Module: Resolve Dependencies
-    Module->>Module: Initialize
-    Module->>EventBus: Register Handlers
-    Module->>Container: Ready
-```
+## 8. Database Architecture
+The system uses PostgreSQL as the primary data store and Redis for caching.
 
-## 5. Event-Driven Communication
+## 9. API Layer
+The API layer is implemented using Fastify and follows a modular structure.
 
-### Event Flow
-```mermaid
-graph LR
-    A[Source Module] -->|Publish| B[Event Bus]
-    B -->|Route| C[Target Module]
-    B -->|Dead Letter| D[DLQ]
-    D -->|Retry| B
-```
-
-### Event Types
-- System Events
-- Business Events
-- Error Events
-- Audit Events
-
-## 6. Database Architecture
-
-### Schema Organization
-```mermaid
-graph TB
-    subgraph Core Schema
-        Users
-        Audit
-        Config
-    end
-    
-    subgraph Module Schemas
-        Accounting
-        HR
-        Inventory
-    end
-    
-    Core Schema --> Module Schemas
-```
-
-### Caching Strategy
-- Query Result Caching
-- Session Data
-- Temporary Data Storage
-- Rate Limiting
-
-## 7. API Layer
-
-### Request Flow
-```mermaid
-graph LR
-    A[Client] -->|Request| B[API Gateway]
-    B -->|Authenticate| C[Auth]
-    B -->|Validate| D[Validation]
-    B -->|Route| E[Module]
-    E -->|Response| A
-```
-
-### API Features
-- Request Validation
-- Rate Limiting
-- Error Handling
-- Response Formatting
-
-## 8. Security
-
-### Security Features
+## 10. Security
+Security features include:
 - JWT Authentication
 - Role-Based Access Control
 - Request Validation
 - Rate Limiting
-- CSRF Protection
-- Security Headers
 
-### Security Flow
-```mermaid
-sequenceDiagram
-    participant Client
-    participant Gateway
-    participant Auth
-    participant Module
-    
-    Client->>Gateway: Request + JWT
-    Gateway->>Auth: Validate Token
-    Auth->>Gateway: Token Valid
-    Gateway->>Module: Authorized Request
-    Module->>Client: Response
+## 11. Development & Deployment
+The development workflow involves:
+1. Local Development with Vite HMR
+2. Unit and Integration Testing with Jest
+3. Building and Deployment
+
+## 12. Directory Structure
 ```
-
-## 9. Development & Deployment
-
-### Development Workflow
-1. Local Development
-   - npm run dev
-   - Vite HMR
-   - Live Reload
-
-2. Testing
-   - Unit Tests
-   - Integration Tests
-   - E2E Tests
-
-3. Deployment
-   - Build Process
-   - Container Creation
-   - Service Deployment
-
-### CI/CD Pipeline
-```mermaid
-graph LR
-    A[Code] -->|Push| B[Build]
-    B -->|Test| C[Test]
-    C -->|Package| D[Package]
-    D -->|Deploy| E[Deploy]
-```
-[Previous sections remain the same until Section 9...]
-
-## 9. Development & Deployment
-
-[Previous content remains...]
-
-## 10. Scaling & High Availability
-
-### Horizontal Scaling
-```mermaid
-graph TB
-    subgraph Load Balancer
-        LB[HAProxy/NGINX]
-    end
-    
-    subgraph API Layer
-        API1[API Gateway 1]
-        API2[API Gateway 2]
-        API3[API Gateway 3]
-    end
-    
-    subgraph Event Processing
-        MQ1[RabbitMQ Node 1]
-        MQ2[RabbitMQ Node 2]
-        H1[Handler Pool 1]
-        H2[Handler Pool 2]
-    end
-    
-    LB --> API1
-    LB --> API2
-    LB --> API3
-    API1 --> MQ1
-    API2 --> MQ1
-    API3 --> MQ2
-    MQ1 --> H1
-    MQ2 --> H2
-```
-
-### Scaling Strategy
-| Component | Scaling Method | Considerations |
-|-----------|---------------|----------------|
-| API Gateway | Horizontal | Stateless, behind load balancer |
-| Event Handlers | Dynamic | Based on queue size |
-| Database | Read Replicas | For read-heavy operations |
-| Cache | Redis Cluster | Distributed caching |
-
-### High Availability Setup
-- Multiple API instances across availability zones
-- RabbitMQ clusters with mirrored queues
-- Database replication with automated failover
-- Redis cluster with sentinel monitoring
-
-## 11. API Gateway Architecture
-
-### Request Flow Detail
-```mermaid
-sequenceDiagram
-    participant Client
-    participant LoadBalancer
-    participant Gateway
-    participant Auth
-    participant RateLimit
-    participant Logger
-    participant Handler
-
-    Client->>LoadBalancer: HTTP Request
-    LoadBalancer->>Gateway: Route Request
-    Gateway->>Logger: Log Request
-    Gateway->>RateLimit: Check Limits
-    Gateway->>Auth: Validate Token
-    Auth->>Gateway: Token Valid
-    Gateway->>Handler: Process Request
-    Handler->>Client: Response
-```
-
-### Route Configuration Example
-```javascript
-{
-  "routes": {
-    "/api/users": {
-      "get": {
-        "handler": "UserController.list",
-        "middleware": ["auth", "rateLimit"],
-        "validation": {
-          "query": {
-            "page": "number",
-            "limit": "number"
-          }
-        },
-        "response": {
-          "200": {
-            "type": "array",
-            "items": "User"
-          }
-        }
-      }
-    }
-  }
-}
-```
-
-## 12. Event Processing System
-
-### Event Handling Flow
-```mermaid
-graph TB
-    subgraph Publisher
-        P[Module] --> V[Validation]
-        V --> S[Serialization]
-    end
-    
-    subgraph Message Broker
-        Q1[Main Queue]
-        Q2[Retry Queue]
-        Q3[Dead Letter]
-    end
-    
-    subgraph Consumer
-        H[Handler]
-        R[Retry Logic]
-        L[Logger]
-    end
-    
-    S --> Q1
-    Q1 --> H
-    H --> R
-    R --> Q2
-    Q2 --> H
-    R --> Q3
-    H --> L
-```
-
-### Retry Strategy
-```javascript
-{
-  "retryPolicy": {
-    "attempts": 3,
-    "backoff": {
-      "type": "exponential",
-      "initial": 1000,
-      "multiplier": 2,
-      "maxDelay": 30000
-    },
-    "deadLetter": {
-      "queue": "dlq.errors",
-      "ttl": 604800 // 7 days
-    }
-  }
-}
-```
-
-### Event Debugging
-- Unique correlation IDs for request tracing
-- Event payload versioning
-- Comprehensive event logging
-- Dead letter queue monitoring
-
-## 13. Logging & Monitoring
-
-### Logging Architecture
-```mermaid
-graph LR
-    A[Application] -->|Logs| B[Winston]
-    B -->|Ship| C[Elasticsearch]
-    C -->|Visualize| D[Kibana]
-    A -->|Metrics| E[Prometheus]
-    E -->|Display| F[Grafana]
-    A -->|Traces| G[OpenTelemetry]
-    G -->|Analyze| H[Jaeger]
-```
-
-### Logging Configuration
-```javascript
-{
-  "logging": {
-    "levels": {
-      "error": 0,
-      "warn": 1,
-      "info": 2,
-      "debug": 3
-    },
-    "transports": [
-      {
-        "type": "console",
-        "format": "json",
-        "level": "info"
-      },
-      {
-        "type": "elasticsearch",
-        "level": "debug",
-        "indexPattern": "toro-logs-YYYY.MM.DD"
-      }
-    ]
-  }
-}
-```
-
-### Monitoring Metrics
-| Category | Metrics | Alert Threshold |
-|----------|---------|-----------------|
-| API | Response Time | > 500ms |
-| API | Error Rate | > 1% |
-| Event | Queue Size | > 1000 |
-| Event | Processing Time | > 2s |
-| Database | Connection Pool | > 80% |
-| Cache | Hit Rate | < 80% |
-
-## 14. Configuration & Secrets
-
-### Configuration Hierarchy
-1. Default Values
-2. Configuration Files
-3. Environment Variables
-4. Secrets Management
-
-### Secrets Management
-```mermaid
-graph TB
-    subgraph Application
-        A[App] --> B[Config Service]
-    end
-    
-    subgraph Secrets Management
-        C[Vault]
-        D[AWS Secrets Manager]
-        E[Doppler]
-    end
-    
-    B --> C
-    B --> D
-    B --> E
-```
-
-### Environment Configuration
-```javascript
-{
-  "config": {
-    "sources": [
-      {
-        "type": "file",
-        "path": "config/default.json"
-      },
-      {
-        "type": "env",
-        "prefix": "TORO_"
-      },
-      {
-        "type": "vault",
-        "path": "secrets/toro"
-      }
-    ],
-    "schema": {
-      "database": {
-        "url": "string:secret",
-        "pool": "object"
-      },
-      "api": {
-        "key": "string:secret",
-        "timeout": "number"
-      }
-    }
-  }
-}
-```
-
-## 15. Directory Structure
-
-```
-toro_sm/
+tsmis/
 ├── src/
-│   ├── core/           # Core system components
-│   │   ├── container/  # Dependency injection
-│   │   ├── events/     # Event system
-│   │   ├── database/   # Database services
-│   │   ├── cache/      # Caching services
-│   │   └── security/   # Security services
-│   ├── modules/        # Business modules
-│   │   ├── accounting/
-│   │   ├── hr/
-│   │   ├── inventory/
-│   │   └── ...
-│   └── shared/         # Shared utilities
-├── tests/             # Test files
-├── docs/             # Documentation
-└── scripts/          # Utility scripts
-```
-
-### File Organization
-Each module follows a standard structure:
-```
-module/
-├── index.js          # Module entry point
-├── routes.js         # Route definitions
-├── handlers.js       # Event handlers
-├── models/           # Data models
-├── services/         # Business logic
-└── tests/           # Module tests
+│   ├── core/          # Core system
+│   │   ├── container/ # DI container
+│   │   ├── errors/    # Error system
+│   │   └── module/    # Module base
+│   ├── modules/       # Business modules
+│   └── services/      # Shared services
+├── tests/             # Test files  
+└── docs/              # Documentation
 ```

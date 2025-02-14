@@ -201,6 +201,29 @@ class FileSystem {
 
 ## Business Modules
 
+### Business Module File Structure
+
+A typical business module follows this file structure:
+
+```
+modules/accounting/
+├── index.js         # Module definition & setup
+├── config.js        # Module config
+├── errors/          # Module specific errors
+├── services/        # Business logic 
+├── routes/          # API routes
+├── plugins/         # Special tools or features to the specific module
+└── schemas/         # Validation schemas
+```
+
+- `index.js`: Contains the module class definition and setup code.
+- `config.js`: Holds the module-specific configuration.
+- `errors/`: Contains module-specific error classes.
+- `services/`: Encapsulates the business logic and interactions with other services.
+- `routes/`: Defines the API routes handled by the module.
+- `plugins/`: Contains special tools or features specific to the module.
+- `schemas/`: Holds validation schemas for the module's data.
+
 ### Module Implementation
 ```javascript
 class HRModule extends CoreModule {
