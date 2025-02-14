@@ -1,5 +1,7 @@
+// src/app.js
 import 'dotenv/config';
 import Fastify from 'fastify';
+import { EventEmitter } from 'events';
 
 // Core System Imports
 import { CoreContainer } from './core/container/Container.js';
@@ -17,16 +19,20 @@ export async function buildApp() {
       logger: console 
     });
   };
-  
-  // Register as a factory function
   container.register('errorSystem', errorSystemFactory);
 
-    // Create and register module system 
-    const moduleSystemFactory = (deps) => {
-      return createModuleSystem(deps);
-    };
-  
-    container.register('moduleSystem', moduleSystemFactory);
+  // Register eventBus
+  const eventBus = new EventEmitter();
+  container.register('eventBus', () => eventBus);
+
+  // Register config
+  container.register('config', () => ({}));
+
+  // Create and register module system 
+  const moduleSystemFactory = (deps) => {
+    return createModuleSystem(deps);
+  };
+  container.register('moduleSystem', moduleSystemFactory);
 
   // Create Fastify instance with error serialization
   const fastify = Fastify({
@@ -52,8 +58,7 @@ export async function buildApp() {
     console.error('Container initialization error:', error);
     throw error;
   }
-// const moduleSystem = await container.resolve('moduleSystem');
-// await moduleSystem.initialize();
+
   // Basic route as a health check
   fastify.get('/', async (request, reply) => {
     return { 

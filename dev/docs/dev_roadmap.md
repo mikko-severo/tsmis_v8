@@ -6,12 +6,13 @@ Version 1.1
 - [x] Core architecture design
 - [x] Container (Dependency Injection) 
 - [x] Error System
-- [x] Module System base class
+- [x] Module System 
+- [ ] Event Bus implementation
 - [x] Unit testing setup
 
 ## Phase 2: Core Services (In Progress)
 - [x] Logging Service
-- [ ] Event Bus implementation
+
 - [ ] Configuration Service  
 - [ ] Database Access Service
 - [ ] Authentication & Authorization Service

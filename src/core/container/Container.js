@@ -149,7 +149,6 @@ export class CoreContainer extends EventEmitter {
     const deps = this.dependencies.get(name) || [];
     const resolvedDeps = {};
   
-    // Resolve each dependency
     for (const dep of deps) {
       resolvedDeps[dep] = await this.resolve(dep);
     }
@@ -157,26 +156,18 @@ export class CoreContainer extends EventEmitter {
     // Handle different component types
     let instance;
     if (typeof Component === 'function') {
-      // If it's a class constructor
       if (Component.prototype) {
-        // Use dependencies in constructor if it expects them
-        instance = Component.length > 0 
-          ? new Component(resolvedDeps) 
-          : new Component();
-      } 
-      // If it's a factory function
-      else {
-        // Call factory with dependencies if it expects them
-        instance = Component.length > 0 
-          ? Component(resolvedDeps) 
-          : Component();
+        // Class constructor
+        instance = new Component(resolvedDeps);
+      } else {
+        // Factory function - handle both sync and async
+        instance = await Promise.resolve(Component(resolvedDeps));
       }
     } else {
-      // If it's already an instance
       instance = Component;
     }
   
-    // Initialize if container is already initialized
+    // Initialize if container is initialized
     if (this.initialized && typeof instance.initialize === 'function') {
       await instance.initialize();
     }
@@ -259,24 +250,6 @@ export class CoreContainer extends EventEmitter {
 
     return order;
   }
-
-  /**
-   * Shutdown all components
-   */
-//   async shutdown() {
-//     const order = this.resolveDependencyOrder().reverse();
-
-//     for (const name of order) {
-//       const instance = this.instances.get(name);
-//       if (instance && typeof instance.shutdown === 'function') {
-//         await instance.shutdown();
-//       }
-//     }
-
-//     this.instances.clear();
-//     this.initialized = false;
-//     this.emit('shutdown');
-//   }
 
 async shutdown() {
     // Shutdown in reverse dependency order

@@ -167,8 +167,10 @@
 
 // src/app.js
 
+// src/app.js
 import 'dotenv/config';
 import Fastify from 'fastify';
+import { EventEmitter } from 'events';
 
 // Core System Imports
 import { CoreContainer } from './core/container/Container.js';
@@ -186,16 +188,20 @@ export async function buildApp() {
       logger: console 
     });
   };
-  
-  // Register as a factory function
   container.register('errorSystem', errorSystemFactory);
 
-    // Create and register module system 
-    const moduleSystemFactory = (deps) => {
-      return createModuleSystem(deps);
-    };
-  
-    container.register('moduleSystem', moduleSystemFactory);
+  // Register eventBus
+  const eventBus = new EventEmitter();
+  container.register('eventBus', () => eventBus);
+
+  // Register config
+  container.register('config', () => ({}));
+
+  // Create and register module system 
+  const moduleSystemFactory = (deps) => {
+    return createModuleSystem(deps);
+  };
+  container.register('moduleSystem', moduleSystemFactory);
 
   // Create Fastify instance with error serialization
   const fastify = Fastify({
@@ -221,8 +227,7 @@ export async function buildApp() {
     console.error('Container initialization error:', error);
     throw error;
   }
-// const moduleSystem = await container.resolve('moduleSystem');
-// await moduleSystem.initialize();
+
   // Basic route as a health check
   fastify.get('/', async (request, reply) => {
     return { 
@@ -410,7 +415,6 @@ export class CoreContainer extends EventEmitter {
     const deps = this.dependencies.get(name) || [];
     const resolvedDeps = {};
   
-    // Resolve each dependency
     for (const dep of deps) {
       resolvedDeps[dep] = await this.resolve(dep);
     }
@@ -418,26 +422,18 @@ export class CoreContainer extends EventEmitter {
     // Handle different component types
     let instance;
     if (typeof Component === 'function') {
-      // If it's a class constructor
       if (Component.prototype) {
-        // Use dependencies in constructor if it expects them
-        instance = Component.length > 0 
-          ? new Component(resolvedDeps) 
-          : new Component();
-      } 
-      // If it's a factory function
-      else {
-        // Call factory with dependencies if it expects them
-        instance = Component.length > 0 
-          ? Component(resolvedDeps) 
-          : Component();
+        // Class constructor
+        instance = new Component(resolvedDeps);
+      } else {
+        // Factory function - handle both sync and async
+        instance = await Promise.resolve(Component(resolvedDeps));
       }
     } else {
-      // If it's already an instance
       instance = Component;
     }
   
-    // Initialize if container is already initialized
+    // Initialize if container is initialized
     if (this.initialized && typeof instance.initialize === 'function') {
       await instance.initialize();
     }
@@ -520,24 +516,6 @@ export class CoreContainer extends EventEmitter {
 
     return order;
   }
-
-  /**
-   * Shutdown all components
-   */
-//   async shutdown() {
-//     const order = this.resolveDependencyOrder().reverse();
-
-//     for (const name of order) {
-//       const instance = this.instances.get(name);
-//       if (instance && typeof instance.shutdown === 'function') {
-//         await instance.shutdown();
-//       }
-//     }
-
-//     this.instances.clear();
-//     this.initialized = false;
-//     this.emit('shutdown');
-//   }
 
 async shutdown() {
     // Shutdown in reverse dependency order
@@ -2087,31 +2065,38 @@ export default ErrorTypes;
 // src/core/module/Module.js
 
 // src/core/module/Module.js
-
 import { EventEmitter } from 'events';
-import { ModuleError } from '../errors/index.js';
+import { ModuleError, ValidationError } from '../errors/index.js';
 
 export class CoreModule extends EventEmitter {
   static dependencies = ['errorSystem', 'eventBus', 'config'];
   static version = '1.0.0';
-
+  
   constructor(deps = {}) {
     super();
     this.deps = deps;
     this.initialized = false;
     this.config = deps.config || {};
+    
+    // Enhanced state tracking
     this.state = {
       status: 'created',
       startTime: null,
       errors: [],
-      metrics: new Map()
+      metrics: new Map(),
+      healthChecks: new Map(),
+      lastHealthCheck: null
     };
 
-    // Validate required dependencies
+    // Validate dependencies immediately
     this.validateDependencies();
+    
+    // Set up health check interval
+    this.healthCheckInterval = null;
   }
 
   validateDependencies() {
+    // Check required dependencies
     const missing = this.constructor.dependencies.filter(
       dep => !this.deps[dep]
     );
@@ -2120,6 +2105,45 @@ export class CoreModule extends EventEmitter {
       throw new ModuleError(
         'MISSING_DEPENDENCIES',
         `Missing required dependencies: ${missing.join(', ')}`
+      );
+    }
+
+    // Validate dependency interfaces
+    if (this.deps.eventBus && (typeof this.deps.eventBus.emit !== 'function' || 
+        typeof this.deps.eventBus.on !== 'function')) {
+      throw new ModuleError(
+        'INVALID_EVENTBUS',
+        'EventBus missing required methods'
+      );
+    }
+
+    if (this.deps.errorSystem && typeof this.deps.errorSystem.handleError !== 'function') {
+      throw new ModuleError(
+        'INVALID_ERROR_SYSTEM',
+        'ErrorSystem missing required methods'
+      );
+    }
+  }
+
+  async validateConfig() {
+    try {
+      // Basic config validation
+      if (this.config === null || typeof this.config !== 'object') {
+        throw new ValidationError(
+          'INVALID_CONFIG',
+          'Configuration must be an object'
+        );
+      }
+
+      // Module-specific validation
+      await this.onValidateConfig();
+      
+      return true;
+    } catch (error) {
+      throw new ModuleError(
+        'CONFIG_VALIDATION_FAILED',
+        'Failed to validate configuration',
+        { originalError: error }
       );
     }
   }
@@ -2136,13 +2160,27 @@ export class CoreModule extends EventEmitter {
       this.state.startTime = Date.now();
       this.state.status = 'initializing';
 
-      // Added more explicit initialization steps
+      // Configuration phase
+      await this.validateConfig();
       await this.onConfigure();
+
+      // Setup phase
       await this.setupEventHandlers();
+      await this.setupHealthChecks();
+
+      // Initialize phase
       await this.onInitialize();
+
+      // Start health check monitoring
+      this.startHealthChecks();
       
       this.initialized = true;
       this.state.status = 'running';
+
+      await this.emit('module:initialized', {
+        name: this.constructor.name,
+        timestamp: new Date().toISOString()
+      });
 
       return this;
 
@@ -2161,36 +2199,79 @@ export class CoreModule extends EventEmitter {
     }
   }
 
-  async onConfigure() {
-    // Cover lines 62-68: Explicit configuration handling
-    if (this.config === null || this.config === undefined) {
-      // Ensure config is always an object
-      this.config = {};
-    }
+  async setupHealthChecks() {
+    // Register default health checks
+    this.registerHealthCheck('state', async () => {
+      return {
+        status: this.state.status === 'running' ? 'healthy' : 'unhealthy',
+        uptime: Date.now() - this.state.startTime,
+        errorCount: this.state.errors.length
+      };
+    });
 
-    // Optional additional configuration logic
-    if (Object.keys(this.config).length === 0) {
-      // Default configuration if empty
-      this.config.default = true;
-    }
-
-    return Promise.resolve();
+    // Allow modules to add their own health checks
+    await this.onSetupHealthChecks();
   }
 
-  async setupEventHandlers() {
-    // Default event handler setup
-    // Can be overridden or extended by child classes
-    return Promise.resolve();
+  registerHealthCheck(name, checkFn) {
+    if (typeof checkFn !== 'function') {
+      throw new ModuleError(
+        'INVALID_HEALTH_CHECK',
+        `Health check ${name} must be a function`
+      );
+    }
+    this.state.healthChecks.set(name, checkFn);
   }
 
-  async onInitialize() {
-    // Default initialization logic
-    // Can be overridden by child classes
-    return Promise.resolve();
+  startHealthChecks() {
+    // Run health checks every 30 seconds by default
+    this.healthCheckInterval = setInterval(async () => {
+      try {
+        const health = await this.checkHealth();
+        this.state.lastHealthCheck = health;
+        
+        if (health.status !== 'healthy') {
+          await this.handleError(new ModuleError(
+            'HEALTH_CHECK_FAILED',
+            'Module health check failed',
+            { health }
+          ));
+        }
+      } catch (error) {
+        await this.handleError(error);
+      }
+    }, 30000);
+  }
+
+  async checkHealth() {
+    const results = {};
+    let overallStatus = 'healthy';
+
+    for (const [name, checkFn] of this.state.healthChecks) {
+      try {
+        results[name] = await checkFn();
+        if (results[name].status !== 'healthy') {
+          overallStatus = 'unhealthy';
+        }
+      } catch (error) {
+        results[name] = {
+          status: 'error',
+          error: error.message
+        };
+        overallStatus = 'unhealthy';
+      }
+    }
+
+    return {
+      name: this.constructor.name,
+      version: this.constructor.version,
+      status: overallStatus,
+      timestamp: new Date().toISOString(),
+      checks: results
+    };
   }
 
   async handleError(error, context = {}) {
-    // Ensure context is an object
     const safeContext = context || {};
 
     // Add error to state
@@ -2200,12 +2281,12 @@ export class CoreModule extends EventEmitter {
       context: safeContext
     });
 
-    // Trim error history if needed
+    // Trim error history
     if (this.state.errors.length > 100) {
       this.state.errors.shift();
     }
 
-    // Forward to error system with enhanced error handling
+    // Forward to error system
     if (this.deps.errorSystem) {
       try {
         await this.deps.errorSystem.handleError(error, {
@@ -2218,6 +2299,13 @@ export class CoreModule extends EventEmitter {
       }
     }
 
+    // Emit error event
+    await this.emit('module:error', {
+      module: this.constructor.name,
+      error,
+      context: safeContext
+    });
+
     return this;
   }
 
@@ -2225,9 +2313,16 @@ export class CoreModule extends EventEmitter {
     // Emit through local EventEmitter
     const localEmitResult = super.emit(eventName, ...args);
 
-    // Broadcast through eventBus
-    if (this.deps.eventBus && typeof this.deps.eventBus.emit === 'function') {
-      await this.deps.eventBus.emit(eventName, ...args);
+    // Broadcast through eventBus if available
+    if (this.deps.eventBus?.emit) {
+      try {
+        await this.deps.eventBus.emit(eventName, ...args);
+      } catch (error) {
+        await this.handleError(error, {
+          event: eventName,
+          args
+        });
+      }
     }
 
     return localEmitResult;
@@ -2235,15 +2330,19 @@ export class CoreModule extends EventEmitter {
 
   async shutdown() {
     try {
-      // Cover line 188: Explicit shutdown handling
       if (!this.initialized) {
-        // Early return if not initialized
         return this;
       }
 
       this.state.status = 'shutting_down';
       
-      // Ensure onShutdown is called
+      // Stop health checks
+      if (this.healthCheckInterval) {
+        clearInterval(this.healthCheckInterval);
+        this.healthCheckInterval = null;
+      }
+
+      // Custom shutdown logic
       await this.onShutdown();
       
       // Reset state
@@ -2251,9 +2350,13 @@ export class CoreModule extends EventEmitter {
       this.state.status = 'shutdown';
       this.state.startTime = null;
       
+      await this.emit('module:shutdown', {
+        name: this.constructor.name,
+        timestamp: new Date().toISOString()
+      });
+
       return this;
     } catch (error) {
-      // Enhanced error handling
       this.state.status = 'error';
       this.state.errors.push({
         timestamp: new Date().toISOString(),
@@ -2269,73 +2372,68 @@ export class CoreModule extends EventEmitter {
     }
   }
 
-  async onShutdown() {
-    // Default shutdown logic
-    // Can be overridden by child classes
+  // Lifecycle hooks for derived classes
+  async onValidateConfig() {
+    // Override in derived classes
+    return true;
+  }
+
+  async onConfigure() {
+    // Override in derived classes
     return Promise.resolve();
   }
 
-  async getHealth() {
-    try {
-      // Cover line 119: Explicit metrics handling
-      const metricsData = this.state.metrics instanceof Map 
-        ? Object.fromEntries(this.state.metrics) 
-        : {};
-
-      return {
-        name: this.constructor.name,
-        version: this.constructor.version,
-        status: this.state.status,
-        uptime: this.state.startTime ? Date.now() - this.state.startTime : 0,
-        initialized: this.initialized,
-        errorCount: this.state.errors.length,
-        lastError: this.state.errors[this.state.errors.length - 1],
-        metrics: metricsData
-      };
-    } catch (error) {
-      // Fallback error handling
-      return {
-        name: this.constructor.name,
-        status: 'error',
-        error: error.message,
-        timestamp: new Date().toISOString(),
-        metrics: {}
-      };
-    }
+  async setupEventHandlers() {
+    // Override in derived classes
+    return Promise.resolve();
   }
 
+  async onSetupHealthChecks() {
+    // Override in derived classes
+    return Promise.resolve();
+  }
 
-  // Optional metric recording method
-  recordMetric(name, value) {
+  async onInitialize() {
+    // Override in derived classes
+    return Promise.resolve();
+  }
+
+  async onShutdown() {
+    // Override in derived classes
+    return Promise.resolve();
+  }
+
+  // Metrics tracking
+  recordMetric(name, value, tags = {}) {
     this.state.metrics.set(name, {
       value,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      tags
     });
   }
 }
 
 export function createModule(deps = {}) {
-    // Provide default dependencies if not supplied
-    const defaultDeps = {
-      errorSystem: {
-        handleError: async () => {} // No-op error handler
-      },
-      eventBus: new EventEmitter(), // Default event emitter
-      config: {} // Empty configuration object
-    };
-  
-    // Merge provided deps with defaults, giving priority to provided deps
-    const mergedDeps = {
-      ...defaultDeps,
-      ...deps
-    };
-  
-    return new CoreModule(mergedDeps);
-  }
-  export default {
-    CoreModule,
-    createModule
+  const defaultDeps = {
+    errorSystem: {
+      handleError: async () => {} // No-op error handler
+    },
+    eventBus: new EventEmitter(), // Default event emitter
+    config: {} // Empty configuration object
   };
+
+  const mergedDeps = {
+    ...defaultDeps,
+    ...deps
+  };
+
+  return new CoreModule(mergedDeps);
+}
+
+export default {
+  CoreModule,
+  createModule
+};
 
 
 // src/core/module/ModuleSystem.js
@@ -2344,40 +2442,64 @@ export function createModule(deps = {}) {
 
 import { EventEmitter } from 'events';
 import { CoreModule } from './Module.js';
-import { ModuleError } from '../errors/index.js';
+import { ModuleError, ValidationError } from '../errors/index.js';
 
 export class ModuleSystem extends EventEmitter {
-  static dependencies = ['errorSystem', 'eventBus'];
+  static dependencies = ['errorSystem', 'eventBus', 'config'];
 
   constructor(deps) {
     super();
     this.deps = deps;
     this.modules = new Map();
     this.initialized = false;
+    this.state = {
+      status: 'created',
+      startTime: null,
+      errors: [],
+      metrics: new Map(),
+      moduleHealth: new Map()
+    };
+
+    // Validate dependencies
+    this.validateDependencies();
   }
 
-  async initialize() {
-    if (this.initialized) {
-      console.warn('ModuleSystem is already initialized');
+  validateDependencies() {
+    const missing = this.constructor.dependencies.filter(
+      dep => !this.deps[dep]
+    );
+
+    if (missing.length > 0) {
       throw new ModuleError(
-        'ALREADY_INITIALIZED',
-        'ModuleSystem is already initialized'
+        'MISSING_DEPENDENCIES',
+        `Missing required dependencies: ${missing.join(', ')}`
       );
     }
-  
-    console.log('Initializing ModuleSystem...');
-  
-    for (const [name, module] of this.modules) {
-      console.log(`Initializing module: ${name}`);
-      await module.initialize();
+
+    // Validate dependency interfaces
+    if (!this.deps.eventBus?.emit || !this.deps.eventBus?.on) {
+      throw new ModuleError(
+        'INVALID_EVENTBUS',
+        'EventBus missing required methods'
+      );
     }
-  
-    this.initialized = true;
-    this.emit('initialized');
-  
-    console.log('ModuleSystem initialization complete');
+
+    if (!this.deps.errorSystem?.handleError) {
+      throw new ModuleError(
+        'INVALID_ERROR_SYSTEM',
+        'ErrorSystem missing required methods'
+      );
+    }
   }
-  async register(name, Module, config = {}) {
+
+  async register(name, ModuleClass, config = {}) {
+    if (!(ModuleClass.prototype instanceof CoreModule)) {
+      throw new ValidationError(
+        'INVALID_MODULE',
+        'Module must extend CoreModule'
+      );
+    }
+
     if (this.modules.has(name)) {
       throw new ModuleError(
         'DUPLICATE_MODULE',
@@ -2385,44 +2507,285 @@ export class ModuleSystem extends EventEmitter {
       );
     }
 
-    const module = new Module({
-      ...this.deps,
-      config
-    });
+    try {
+      // Create module instance with dependencies
+      const module = new ModuleClass({
+        ...this.deps,
+        config: {
+          ...this.deps.config?.[name],
+          ...config
+        }
+      });
 
-    this.modules.set(name, module);
-    this.emit('module:registered', { name, module });
+      this.modules.set(name, module);
+
+      // Setup health check listener
+      module.on('module:error', async (error) => {
+        await this.handleModuleError(name, error);
+      });
+
+      await this.emit('module:registered', {
+        name,
+        timestamp: new Date().toISOString()
+      });
+
+      return module;
+    } catch (error) {
+      throw new ModuleError(
+        'REGISTRATION_FAILED',
+        `Failed to register module ${name}`,
+        { originalError: error }
+      );
+    }
+  }
+
+  async unregister(name) {
+    const module = this.modules.get(name);
+    if (!module) return;
+
+    try {
+      if (module.initialized) {
+        await module.shutdown();
+      }
+      
+      this.modules.delete(name);
+      
+      await this.emit('module:unregistered', {
+        name,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      throw new ModuleError(
+        'UNREGISTER_FAILED',
+        `Failed to unregister module ${name}`,
+        { originalError: error }
+      );
+    }
   }
 
   async resolve(name) {
-    if (!this.modules.has(name)) {
+    const module = this.modules.get(name);
+    if (!module) {
       throw new ModuleError(
         'MODULE_NOT_FOUND',
         `Module ${name} is not registered`
       );
     }
+    return module;
+  }
 
-    return this.modules.get(name);
+  async initialize() {
+    if (this.initialized) {
+      throw new ModuleError(
+        'ALREADY_INITIALIZED',
+        'ModuleSystem is already initialized'
+      );
+    }
+
+    try {
+      this.state.startTime = Date.now();
+      this.state.status = 'initializing';
+
+      // Initialize modules in dependency order
+      const initOrder = this.resolveDependencyOrder();
+      
+      for (const name of initOrder) {
+        const module = this.modules.get(name);
+        await module.initialize();
+        
+        // Start monitoring module health
+        await this.startModuleHealthMonitoring(name);
+      }
+
+      this.initialized = true;
+      this.state.status = 'running';
+
+      await this.emit('system:initialized', {
+        timestamp: new Date().toISOString(),
+        modules: Array.from(this.modules.keys())
+      });
+
+    } catch (error) {
+      this.state.status = 'error';
+      throw new ModuleError(
+        'INITIALIZATION_FAILED',
+        'Failed to initialize module system',
+        { originalError: error }
+      );
+    }
+  }
+
+  resolveDependencyOrder() {
+    const visited = new Set();
+    const visiting = new Set();
+    const order = [];
+
+    const visit = (name) => {
+      if (visited.has(name)) return;
+      if (visiting.has(name)) {
+        throw new ModuleError(
+          'CIRCULAR_DEPENDENCY',
+          `Circular dependency detected for module: ${name}`
+        );
+      }
+
+      visiting.add(name);
+
+      const module = this.modules.get(name);
+      const deps = module.constructor.dependencies || [];
+
+      for (const dep of deps) {
+        if (!this.modules.has(dep)) {
+          throw new ModuleError(
+            'MISSING_DEPENDENCY',
+            `Module ${name} requires missing module: ${dep}`
+          );
+        }
+        visit(dep);
+      }
+
+      visiting.delete(name);
+      visited.add(name);
+      order.push(name);
+    };
+
+    for (const name of this.modules.keys()) {
+      visit(name);
+    }
+
+    return order;
+  }
+
+  async startModuleHealthMonitoring(name) {
+    const module = this.modules.get(name);
+    if (!module) return;
+
+    // Monitor module health status
+    setInterval(async () => {
+      try {
+        const health = await module.checkHealth();
+        this.state.moduleHealth.set(name, health);
+
+        if (health.status !== 'healthy') {
+          await this.handleModuleError(name, new ModuleError(
+            'UNHEALTHY_MODULE',
+            `Module ${name} is unhealthy`,
+            { health }
+          ));
+        }
+      } catch (error) {
+        await this.handleModuleError(name, error);
+      }
+    }, 60000); // Check every minute
+  }
+
+  async handleModuleError(moduleName, error) {
+    this.state.errors.push({
+      timestamp: new Date().toISOString(),
+      module: moduleName,
+      error: error.message
+    });
+
+    // Trim error history
+    if (this.state.errors.length > 100) {
+      this.state.errors.shift();
+    }
+
+    // Forward to error system
+    await this.deps.errorSystem.handleError(error, {
+      source: 'ModuleSystem',
+      module: moduleName
+    });
+
+    await this.emit('module:error', {
+      module: moduleName,
+      error,
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  async getSystemHealth() {
+    const moduleHealth = {};
+    let systemStatus = 'healthy';
+
+    for (const [name, module] of this.modules) {
+      try {
+        const health = await module.checkHealth();
+        moduleHealth[name] = health;
+        
+        if (health.status !== 'healthy') {
+          systemStatus = 'degraded';
+        }
+      } catch (error) {
+        moduleHealth[name] = {
+          status: 'error',
+          error: error.message
+        };
+        systemStatus = 'unhealthy';
+      }
+    }
+
+    return {
+      status: systemStatus,
+      timestamp: new Date().toISOString(),
+      uptime: Date.now() - this.state.startTime,
+      modules: moduleHealth,
+      errorCount: this.state.errors.length
+    };
   }
 
   async shutdown() {
-    if (!this.initialized) {
-      return;
-    }
+    if (!this.initialized) return;
 
-    for (const [name, module] of this.modules) {
-      await module.shutdown();
-    }
+    try {
+      this.state.status = 'shutting_down';
 
-    this.modules.clear();
-    this.initialized = false;
-    this.emit('shutdown');
+      // Shutdown modules in reverse dependency order
+      const shutdownOrder = this.resolveDependencyOrder().reverse();
+
+      for (const name of shutdownOrder) {
+        const module = this.modules.get(name);
+        await module.shutdown();
+      }
+
+      this.modules.clear();
+      this.initialized = false;
+      this.state.status = 'shutdown';
+
+      await this.emit('system:shutdown', {
+        timestamp: new Date().toISOString()
+      });
+
+    } catch (error) {
+      this.state.status = 'error';
+      throw new ModuleError(
+        'SHUTDOWN_FAILED',
+        'Failed to shutdown module system',
+        { originalError: error }
+      );
+    }
   }
 }
 
-export function createModuleSystem(deps) {
-  return new ModuleSystem(deps);
-}
+export function createModuleSystem(deps = {}) {
+    const defaultDeps = {
+      errorSystem: {
+        handleError: async () => {} // No-op error handler
+      },
+      eventBus: new EventEmitter(), // Default event emitter
+      config: {} // Empty configuration object
+    };
+  
+    return new ModuleSystem({
+      ...defaultDeps,
+      ...deps
+    });
+  }
+
+export default {
+  ModuleSystem,
+  createModuleSystem
+};
 
 
 // src/core/module/module-system-docs-updated.md
@@ -2454,6 +2817,69 @@ The TSMIS architecture is built on three main layers:
 
 ## Core Concepts
 
+### Core Dependencies
+
+The module system has three required dependencies:
+
+```javascript
+static dependencies = ['errorSystem', 'eventBus', 'config'];
+```
+#### Dependency Resolution
+
+Dependencies are resolved in the following ways:
+
+1. Through the Container (primary method)
+2. Through default fallbacks (development/testing)
+3. Through explicit injection
+
+#### Default Fallbacks
+
+```javascript
+const defaultDeps = {
+  errorSystem: {
+    handleError: async () => {} // No-op handler
+  },
+  eventBus: new EventEmitter(), // Default emitter
+  config: {} // Empty config
+};
+```
+
+#### Component Registration
+
+Components can be registered in two ways:
+
+1. As Singleton Instances:
+
+```javascript
+// In app.js
+const eventBus = new EventEmitter();
+container.register('eventBus', () => eventBus);
+```
+
+2. As Factory Functions:
+
+```javascript
+container.register('moduleSystem', (deps) => {
+  return createModuleSystem(deps);
+});
+```
+#### Event System Integration
+
+Modules can communicate through the EventBus in two ways:
+
+1. Direct Events (local):
+
+```javascript
+// Within a module
+this.emit('localEvent', data);
+```
+
+2. System Events (global):
+
+```javascript
+// Broadcast to all modules
+this.deps.eventBus.emit('globalEvent', data);
+```
 ### Architectural Principles
 - Clear separation of concerns
 - Infrastructure/business logic separation
@@ -2473,37 +2899,14 @@ The TSMIS architecture is built on three main layers:
 
 ```mermaid
 graph TB
-    %% Core Container Level
-    CC[CoreContainer] --> ES[ErrorSystem]
-    CC --> MS[ModuleSystem]
-    CC --> EB[EventBus]
-    CC --> CFG[ConfigSystem]
-
-    %% Core Module Structure
-    subgraph CoreModule[Core Module]
-        ST[State Management] --> EM[Event Management]
-        ST --> EH[Error Handling]
-        ST --> HM[Health Monitoring]
-        ST --> MT[Metrics Tracking]
-        
-        EM --> LE[Local Events]
-        EM --> BE[Bus Events]
-    end
-
-    %% Core Dependencies
-    CoreModule --> ES
-    CoreModule --> EB
-    CoreModule --> CFG
-
-    %% State Flow
-    subgraph States[Module States]
-        Created --> Initializing
-        Initializing --> Running
-        Running --> ShuttingDown
-        ShuttingDown --> Shutdown
-        Running --> Error
-        Initializing --> Error
-    end
+    Container --> ErrorSystem
+    Container --> EventBus
+    Container --> ModuleSystem
+    
+    ModuleSystem --> BusinessModules
+    
+    ErrorSystem --> |Error Handling| BusinessModules
+    EventBus --> |Event Flow| BusinessModules
 ```
 
 ## Core Systems
@@ -2610,6 +3013,14 @@ async emit(eventName, ...args) {
 ## Health Monitoring
 
 ### Health Check Implementation
+
+The system now includes comprehensive health monitoring:
+
+- Component status tracking
+- Error history
+- Metrics collection
+- Performance monitoring
+
 ```javascript
 async getHealth() {
   return {
@@ -2714,6 +3125,12 @@ describe('CoreModule', () => {
 ```
 
 ## Best Practices
+
+1. Always use Container for dependency injection
+2. Utilize event system for module communication
+3. Implement health checks for modules
+4. Handle errors with proper context
+5. Use singleton components judiciously
 
 ### 1. Module Implementation
 - Validate dependencies in constructor

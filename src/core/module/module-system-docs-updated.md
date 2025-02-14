@@ -25,6 +25,69 @@ The TSMIS architecture is built on three main layers:
 
 ## Core Concepts
 
+### Core Dependencies
+
+The module system has three required dependencies:
+
+```javascript
+static dependencies = ['errorSystem', 'eventBus', 'config'];
+```
+#### Dependency Resolution
+
+Dependencies are resolved in the following ways:
+
+1. Through the Container (primary method)
+2. Through default fallbacks (development/testing)
+3. Through explicit injection
+
+#### Default Fallbacks
+
+```javascript
+const defaultDeps = {
+  errorSystem: {
+    handleError: async () => {} // No-op handler
+  },
+  eventBus: new EventEmitter(), // Default emitter
+  config: {} // Empty config
+};
+```
+
+#### Component Registration
+
+Components can be registered in two ways:
+
+1. As Singleton Instances:
+
+```javascript
+// In app.js
+const eventBus = new EventEmitter();
+container.register('eventBus', () => eventBus);
+```
+
+2. As Factory Functions:
+
+```javascript
+container.register('moduleSystem', (deps) => {
+  return createModuleSystem(deps);
+});
+```
+#### Event System Integration
+
+Modules can communicate through the EventBus in two ways:
+
+1. Direct Events (local):
+
+```javascript
+// Within a module
+this.emit('localEvent', data);
+```
+
+2. System Events (global):
+
+```javascript
+// Broadcast to all modules
+this.deps.eventBus.emit('globalEvent', data);
+```
 ### Architectural Principles
 - Clear separation of concerns
 - Infrastructure/business logic separation
@@ -44,37 +107,14 @@ The TSMIS architecture is built on three main layers:
 
 ```mermaid
 graph TB
-    %% Core Container Level
-    CC[CoreContainer] --> ES[ErrorSystem]
-    CC --> MS[ModuleSystem]
-    CC --> EB[EventBus]
-    CC --> CFG[ConfigSystem]
-
-    %% Core Module Structure
-    subgraph CoreModule[Core Module]
-        ST[State Management] --> EM[Event Management]
-        ST --> EH[Error Handling]
-        ST --> HM[Health Monitoring]
-        ST --> MT[Metrics Tracking]
-        
-        EM --> LE[Local Events]
-        EM --> BE[Bus Events]
-    end
-
-    %% Core Dependencies
-    CoreModule --> ES
-    CoreModule --> EB
-    CoreModule --> CFG
-
-    %% State Flow
-    subgraph States[Module States]
-        Created --> Initializing
-        Initializing --> Running
-        Running --> ShuttingDown
-        ShuttingDown --> Shutdown
-        Running --> Error
-        Initializing --> Error
-    end
+    Container --> ErrorSystem
+    Container --> EventBus
+    Container --> ModuleSystem
+    
+    ModuleSystem --> BusinessModules
+    
+    ErrorSystem --> |Error Handling| BusinessModules
+    EventBus --> |Event Flow| BusinessModules
 ```
 
 ## Core Systems
@@ -181,6 +221,14 @@ async emit(eventName, ...args) {
 ## Health Monitoring
 
 ### Health Check Implementation
+
+The system now includes comprehensive health monitoring:
+
+- Component status tracking
+- Error history
+- Metrics collection
+- Performance monitoring
+
 ```javascript
 async getHealth() {
   return {
@@ -285,6 +333,12 @@ describe('CoreModule', () => {
 ```
 
 ## Best Practices
+
+1. Always use Container for dependency injection
+2. Utilize event system for module communication
+3. Implement health checks for modules
+4. Handle errors with proper context
+5. Use singleton components judiciously
 
 ### 1. Module Implementation
 - Validate dependencies in constructor

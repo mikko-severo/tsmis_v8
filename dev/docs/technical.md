@@ -67,17 +67,41 @@ graph TB
 ## 3. Core Components
 
 ### Container (Dependency Injection)
-The Container manages component lifecycle and dependencies:
+The Container now supports both singleton and factory-based components:
 
 ```javascript
 class CoreContainer {
-  async register(name, component, options)
-  async resolve(name)
-  async initialize()
-  async shutdown()
+  constructor() {
+    this.components = new Map();
+    this.instances = new Map();
+    this.dependencies = new Map();
+    this.manifests = new Map();
+    this.initialized = false;
+  }
+
+  // Registration methods
+  register(name, Component, options = {})
+  resolve(name)
+  initialize()
+  shutdown()
 }
 ```
 
+Component registration patterns:
+
+```javascript
+// Singleton Instance
+const eventBus = new EventEmitter();
+container.register('eventBus', () => eventBus);
+
+// Factory Function
+container.register('moduleSystem', (deps) => {
+  return createModuleSystem(deps);
+});
+
+// Class Constructor
+container.register('errorSystem', ErrorSystem);
+```
 ### Error System
 The Error System standardizes error handling:
 
@@ -109,6 +133,20 @@ And several specialized error types:
 - ServiceError
 - ValidationError
 
+Error handling remains consistent but adds enhanced context:
+
+```javascript
+class ErrorSystem {
+  handleError(error, context) {
+    // Enhanced error context
+    this.logger.error('Error occurred:', {
+      module: context.module,
+      operation: context.operation,
+      timestamp: new Date().toISOString(),
+      error: error.toJSON()
+    });
+  }
+}```
 ### Module System
 The Module system provides the base class for business modules:
 
@@ -125,6 +163,50 @@ class CoreModule extends EventEmitter {
 }
 ```
 
+The ModuleSystem provides enhanced module lifecycle management:
+
+```javascript
+class ModuleSystem extends EventEmitter {
+  static dependencies = ['errorSystem', 'eventBus', 'config'];
+
+  constructor(deps) {
+    this.modules = new Map();
+    this.state = {
+      status: 'created',
+      startTime: null,
+      errors: [],
+      metrics: new Map(),
+      moduleHealth: new Map()
+    };
+  }
+
+  // Registration and lifecycle methods
+  register(name, Module, config)
+  initialize()
+  getSystemHealth()
+  shutdown()
+}
+```
+
+Modules can now include health monitoring and metrics:
+
+```javascript
+class CoreModule extends EventEmitter {
+  constructor(deps) {
+    this.state = {
+      status: 'created',
+      errors: [],
+      metrics: new Map(),
+      healthChecks: new Map()
+    };
+  }
+
+  // Health monitoring methods
+  registerHealthCheck(name, checkFn)
+  checkHealth()
+  recordMetric(name, value, tags)
+}
+```
 ## 4. Error Types
 The Error System defines several specialized error types:
 
@@ -149,6 +231,49 @@ class FastifyIntegration extends IFrameworkIntegration {
 
 It maps Fastify errors to core error types and serializes errors for API responses.
 
+### Application Bootstrap
+
+The application bootstrap process is now more robust:
+
+```javascript
+export async function buildApp() {
+  const container = new CoreContainer();
+
+  // Register core systems
+  container.register('errorSystem', createErrorSystem);
+  container.register('eventBus', () => new EventEmitter());
+  container.register('config', () => ({}));
+  container.register('moduleSystem', createModuleSystem);
+
+  // Initialize container
+  await container.initialize();
+
+  return fastify;
+}
+```
+
+### Module Registration
+
+Business modules are registered through the ModuleSystem:
+
+```javascript
+class HRModule extends CoreModule {
+  static dependencies = ['database', 'auth'];
+
+  async initialize() {
+    await super.initialize();
+    // Module specific initialization
+  }
+
+  // Health check implementation
+  registerHealthChecks() {
+    this.registerHealthCheck('database', async () => {
+      return this.checkDatabaseConnection();
+    });
+  }
+}
+````
+
 ## 6. Module Lifecycle
 Business modules extend the CoreModule class and implement lifecycle methods:
 
@@ -171,7 +296,15 @@ Key lifecycle events include:
 
 ## 7. Event-Driven Communication
 Modules communicate via events emitted through the EventBus.
+Events can now be handled both locally and globally:
 
+```javascript
+// Local module events
+this.emit('employee:created', data);
+
+// Global system events
+this.deps.eventBus.emit('system:employee:created', data);
+```
 ## 8. Database Architecture
 The system uses PostgreSQL as the primary data store and Redis for caching.
 
