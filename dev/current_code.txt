@@ -72,10 +72,15 @@
    │  │  │     ├─ ValidationError.js.html
    │  │  │     ├─ index.html
    │  │  │     └─ index.js.html
+   │  │  ├─ event
+   │  │  │  ├─ EventBus.js.html
+   │  │  │  ├─ EventBusSystem.js.html
+   │  │  │  └─ index.html
    │  │  ├─ favicon.png
    │  │  ├─ index.html
    │  │  ├─ module
    │  │  │  ├─ Module.js.html
+   │  │  │  ├─ ModuleSystem.js.html
    │  │  │  └─ index.html
    │  │  ├─ prettify.css
    │  │  ├─ prettify.js
@@ -126,10 +131,13 @@
    │  │  │     ├─ ValidationError.js
    │  │  │     └─ index.js
    │  │  ├─ event
+   │  │  │  ├─ EventBus.js
+   │  │  │  ├─ EventBusSystem.js
+   │  │  │  └─ event-bus-docs.md
    │  │  ├─ module
    │  │  │  ├─ Module.js
    │  │  │  ├─ ModuleSystem.js
-   │  │  │  └─ module-system-docs-updated.md
+   │  │  │  └─ module-system-docs.md
    │  │  ├─ service
    │  │  └─ validation
    │  ├─ modules
@@ -157,7 +165,8 @@
    │  │  │     ├─ ErrorTypes.test.js
    │  │  │     └─ index.test.js
    │  │  └─ module
-   │  │     └─ Module.test.js
+   │  │     ├─ Module.test.js
+   │  │     └─ ModuleSystem.test.js
    │  └─ index.test.js
    └─ vite.config.js
 
@@ -168,40 +177,26 @@
 // src/app.js
 
 // src/app.js
+
 import 'dotenv/config';
 import Fastify from 'fastify';
-import { EventEmitter } from 'events';
 
 // Core System Imports
 import { CoreContainer } from './core/container/Container.js';
-import { ErrorSystem, createErrorSystem } from './core/errors/ErrorSystem.js';
+import { createErrorSystem } from './core/errors/ErrorSystem.js';
 import { setupErrorHandler } from './core/errors/integrations/fastify/handler.js';
-import { ModuleSystem, createModuleSystem } from './core/module/ModuleSystem.js';
+import { createModuleSystem } from './core/module/ModuleSystem.js';
+import { createEventBusSystem } from './core/event/EventBusSystem.js';
 
 export async function buildApp() {
   // Create the core container
   const container = new CoreContainer();
 
-  // Create and register error system 
-  const errorSystemFactory = () => {
-    return createErrorSystem({ 
-      logger: console 
-    });
-  };
-  container.register('errorSystem', errorSystemFactory);
-
-  // Register eventBus
-  const eventBus = new EventEmitter();
-  container.register('eventBus', () => eventBus);
-
-  // Register config
+  // Register core systems in proper order
+  container.register('errorSystem', createErrorSystem);
   container.register('config', () => ({}));
-
-  // Create and register module system 
-  const moduleSystemFactory = (deps) => {
-    return createModuleSystem(deps);
-  };
-  container.register('moduleSystem', moduleSystemFactory);
+  container.register('eventBusSystem', createEventBusSystem);
+  container.register('moduleSystem', createModuleSystem);
 
   // Create Fastify instance with error serialization
   const fastify = Fastify({
@@ -209,7 +204,6 @@ export async function buildApp() {
       level: process.env.LOG_LEVEL || 'info',
       serializers: {
         error: (error) => {
-          // Resolve error system and use its serializer
           const errorSystem = container.resolve('errorSystem');
           return errorSystem.serializeError(error);
         }
@@ -217,7 +211,7 @@ export async function buildApp() {
     }
   });
 
-  // Setup Fastify error handling
+  // Setup Fastify error handling - THIS LINE IS PRESENT
   setupErrorHandler(fastify);
 
   // Initialize the container
@@ -239,21 +233,16 @@ export async function buildApp() {
   // Graceful shutdown handling
   const closeHandler = async () => {
     try {
-      // Shutdown Fastify
       await fastify.close();
-      
-      // Shutdown container
       await container.shutdown();
     } catch (error) {
       console.error('Shutdown error:', error);
     }
   };
 
-  // Handle various shutdown signals
+  // Handle shutdown signals
   process.on('SIGINT', closeHandler);
   process.on('SIGTERM', closeHandler);
-
-  // Add server close hook
   fastify.addHook('onClose', async () => {
     await container.shutdown();
   });
@@ -456,14 +445,14 @@ export class CoreContainer extends EventEmitter {
         'Container is already initialized'
       );
     }
-    console.log('Initializing Container...');
+    //console.log('Initializing Container...');
     const order = this.resolveDependencyOrder();
 
     for (const name of order) {
-      console.log(`Resolving component: ${name}`);
+      //console.log(`Resolving component: ${name}`);
       const instance = await this.resolve(name);
       if (typeof instance.initialize === 'function') {
-        console.log(`Initializing component: ${name}`);
+        //console.log(`Initializing component: ${name}`);
         await instance.initialize();
       }
     }
@@ -494,7 +483,9 @@ export class CoreContainer extends EventEmitter {
 
       visiting.add(name);
       
+      const component = this.components.get(name);
       const deps = this.dependencies.get(name) || [];
+      
       for (const dep of deps) {
         if (!this.components.has(dep)) {
           throw new ConfigError(
@@ -510,8 +501,25 @@ export class CoreContainer extends EventEmitter {
       order.push(name);
     };
 
+    // Ensure core systems are initialized first
+    const initOrder = [
+      'errorSystem',
+      'config',
+      'eventBusSystem',
+      'moduleSystem'
+    ];
+
+    for (const name of initOrder) {
+      if (this.components.has(name)) {
+        visit(name);
+      }
+    }
+
+    // Then handle any remaining components
     for (const name of this.components.keys()) {
-      visit(name);
+      if (!order.includes(name)) {
+        visit(name);
+      }
     }
 
     return order;
@@ -2062,19 +2070,739 @@ export { ErrorTypes };
 export default ErrorTypes;
 
 
+// src/core/event/EventBus.js
+
+// src/core/event/EventBus.js
+
+import { EventEmitter } from 'events';
+import { CoreError } from '../errors/Error.js';
+
+export class CoreEventBus extends EventEmitter {
+  static dependencies = ['errorSystem', 'config'];
+
+  constructor(deps = {}) {
+    super();
+    this.deps = deps;
+    this.queues = new Map();
+    this.subscriptions = new Map();
+    this.history = new Map();
+    this.maxHistorySize = deps.config?.eventHistory?.maxSize || 1000;
+    this.initialized = false;
+  }
+
+  async initialize() {
+    if (this.initialized) {
+      throw new CoreError('ALREADY_INITIALIZED', 'EventBus is already initialized');
+    }
+
+    try {
+      // Initialize event tracking
+      this.state = {
+        status: 'running',
+        startTime: Date.now(),
+        metrics: new Map(),
+        errors: []
+      };
+
+      this.initialized = true;
+      this.emit('system:initialized', {
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      await this.handleError(error);
+      throw error;
+    }
+  }
+
+  async handleError(error, context = {}) {
+    if (this.deps.errorSystem) {
+      await this.deps.errorSystem.handleError(error, {
+        source: 'CoreEventBus',
+        ...context
+      });
+    }
+  }
+  /**
+   * Enhanced emit with queuing and history
+   */
+  async emit(eventName, data, options = {}) {
+    const event = {
+      id: crypto.randomUUID(),
+      name: eventName,
+      data,
+      timestamp: new Date().toISOString(),
+      metadata: options.metadata || {}
+    };
+
+    // Store in history
+    this.trackEvent(event);
+
+    // Handle queuing if needed
+    if (options.queue) {
+      return this.queueEvent(event, options);
+    }
+
+    // Normal event emission
+    return super.emit(eventName, event);
+  }
+
+  /**
+   * Enhanced subscription with patterns
+   */
+  subscribe(pattern, handler, options = {}) {
+    const subscription = {
+      id: crypto.randomUUID(),
+      pattern,
+      handler,
+      options
+    };
+
+    this.subscriptions.set(subscription.id, subscription);
+    this.on(pattern, handler);
+
+    return subscription.id;
+  }
+
+  /**
+   * Queue events for delayed processing
+   */
+  async queueEvent(event, options = {}) {
+    const queue = this.queues.get(event.name) || [];
+    queue.push({
+      event,
+      options,
+      timestamp: new Date().toISOString()
+    });
+
+    this.queues.set(event.name, queue);
+
+    // Process queue if immediate
+    if (options.immediate) {
+      await this.processQueue(event.name);
+    }
+  }
+
+  /**
+   * Process queued events
+   */
+  async processQueue(queueName) {
+    const queue = this.queues.get(queueName) || [];
+    
+    while (queue.length > 0) {
+      const { event } = queue.shift();
+      await super.emit(event.name, event);
+    }
+
+    this.queues.set(queueName, queue);
+  }
+
+  /**
+   * Track events in history
+   */
+  trackEvent(event) {
+    const history = this.history.get(event.name) || [];
+    history.unshift(event);
+
+    // Trim history if needed
+    if (history.length > this.maxHistorySize) {
+      history.pop();
+    }
+
+    this.history.set(event.name, history);
+  }
+
+  /**
+   * Get event history
+   */
+  getHistory(eventName) {
+    return this.history.get(eventName) || [];
+  }
+
+  /**
+   * Clear history and queues
+   */
+  async reset() {
+    this.queues.clear();
+    this.history.clear();
+    this.removeAllListeners();
+  }
+
+  async shutdown() {
+    if (!this.initialized) return;
+
+    try {
+      await this.reset();
+      this.initialized = false;
+      this.emit('system:shutdown', {
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      await this.handleError(error, { phase: 'shutdown' });
+      throw error;
+    }
+  }
+}
+
+// Factory function for container
+export function createEventBus(deps = {}) {
+    return new CoreEventBus(deps);
+  }
+
+
+// src/core/event/EventBusSystem.js
+
+// src/core/event/EventBusSystem.js
+
+import { EventEmitter } from 'events';
+import { CoreEventBus } from './EventBus.js';
+import { CoreError } from '../errors/Error.js';
+
+export class EventBusSystem extends EventEmitter {
+  static dependencies = ['errorSystem', 'config'];
+
+  constructor(deps) {
+    super();
+    this.deps = deps;
+    this.eventBus = null;
+    this.initialized = false;
+  }
+
+  async initialize() {
+    if (this.initialized) {
+      throw new CoreError('ALREADY_INITIALIZED', 'EventBusSystem is already initialized');
+    }
+
+    try {
+      // Create and initialize event bus
+      this.eventBus = new CoreEventBus(this.deps);
+      await this.eventBus.initialize();
+
+      this.initialized = true;
+      this.emit('system:initialized', {
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      await this.handleError(error);
+      throw error;
+    }
+  }
+
+  async handleError(error, context = {}) {
+    if (this.deps.errorSystem) {
+      await this.deps.errorSystem.handleError(error, {
+        source: 'EventBusSystem',
+        ...context
+      });
+    }
+  }
+
+  getEventBus() {
+    if (!this.initialized) {
+      throw new CoreError('NOT_INITIALIZED', 'EventBusSystem is not initialized');
+    }
+    return this.eventBus;
+  }
+
+  async shutdown() {
+    if (!this.initialized) return;
+
+    try {
+      await this.eventBus.shutdown();
+      this.initialized = false;
+      this.emit('system:shutdown', {
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      await this.handleError(error, { phase: 'shutdown' });
+      throw error;
+    }
+  }
+}
+
+// Factory function for container
+export function createEventBusSystem(deps = {}) {
+  return new EventBusSystem(deps);
+}
+
+
+// src/core/event/event-bus-docs.md
+
+# Event Bus System Documentation
+
+## Table of Contents
+1. [Overview](#overview)
+2. [Core Components](#core-components)
+3. [System Architecture](#system-architecture)
+4. [Container Integration](#container-integration)
+5. [Lifecycle Management](#lifecycle-management)
+6. [Error Handling](#error-handling)
+7. [Event Management](#event-management)
+8. [Module Integration](#module-integration)
+9. [Default Implementations](#default-implementations)
+10. [Testing Strategy](#testing-strategy)
+11. [Best Practices](#best-practices)
+12. [Troubleshooting](#troubleshooting)
+
+## Overview
+
+The EventBus system provides centralized event management and message broker functionality for the TSMIS architecture. It serves as the communication backbone between modules while maintaining system boundaries and proper dependency management.
+
+### Core Dependencies
+```javascript
+static dependencies = ['errorSystem', 'config'];
+```
+
+### Key Features
+- Centralized event management
+- Module-to-module communication
+- Event history tracking
+- Message queuing
+- Error handling integration
+- Health monitoring
+
+## Core Components
+
+### 1. CoreEventBus
+Base event handling class providing core event functionality:
+
+```javascript
+export class CoreEventBus extends EventEmitter {
+  constructor(deps = {}) {
+    super();
+    this.deps = deps;
+    this.queues = new Map();
+    this.subscriptions = new Map();
+    this.history = new Map();
+    this.maxHistorySize = deps.config?.eventHistory?.maxSize || 1000;
+    this.initialized = false;
+  }
+
+  // Core event handling methods
+  async emit(eventName, data, options = {}) {}
+  async subscribe(pattern, handler, options = {}) {}
+  async queueEvent(event, options = {}) {}
+  async processQueue(queueName) {}
+}
+```
+
+### 2. EventBusSystem
+System-level management of the EventBus:
+
+```javascript
+export class EventBusSystem extends EventEmitter {
+  static dependencies = ['errorSystem', 'config'];
+
+  constructor(deps) {
+    super();
+    this.deps = deps;
+    this.eventBus = null;
+    this.initialized = false;
+  }
+
+  getEventBus() {
+    if (!this.initialized) {
+      throw new CoreError('NOT_INITIALIZED', 'EventBusSystem is not initialized');
+    }
+    return this.eventBus;
+  }
+}
+```
+
+## System Architecture
+
+### Architecture Flow
+```mermaid
+graph TB
+    Container --> EventBusSystem
+    EventBusSystem --> CoreEventBus
+    
+    CoreEventBus --> |Events| ModuleA[Module A]
+    CoreEventBus --> |Events| ModuleB[Module B]
+    
+    ModuleA --> |Emit| CoreEventBus
+    ModuleB --> |Emit| CoreEventBus
+    
+    ErrorSystem --> |Error Handling| CoreEventBus
+```
+
+## Container Integration
+
+### Registration
+```javascript
+// src/app.js
+import { createEventBusSystem } from './core/event/EventBusSystem.js';
+
+// Register with container
+container.register('eventBusSystem', createEventBusSystem);
+
+// Registration order
+container.register('errorSystem', createErrorSystem);
+container.register('config', () => ({}));
+container.register('eventBusSystem', createEventBusSystem);
+container.register('moduleSystem', createModuleSystem);
+```
+
+## Lifecycle Management
+
+### Initialization
+```javascript
+class EventBusSystem {
+  async initialize() {
+    if (this.initialized) {
+      throw new CoreError('ALREADY_INITIALIZED', 'EventBusSystem is already initialized');
+    }
+
+    try {
+      // Create and initialize event bus
+      this.eventBus = new CoreEventBus(this.deps);
+      await this.eventBus.initialize();
+
+      this.initialized = true;
+      this.emit('system:initialized', {
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      await this.handleError(error);
+      throw error;
+    }
+  }
+}
+```
+
+### Shutdown
+```javascript
+class EventBusSystem {
+  async shutdown() {
+    if (!this.initialized) return;
+
+    try {
+      await this.eventBus.shutdown();
+      this.initialized = false;
+      this.emit('system:shutdown', {
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      await this.handleError(error, { phase: 'shutdown' });
+      throw error;
+    }
+  }
+}
+```
+
+## Error Handling
+
+### Integration with ErrorSystem
+```javascript
+class CoreEventBus {
+  async handleError(error, context = {}) {
+    if (this.deps.errorSystem) {
+      await this.deps.errorSystem.handleError(error, {
+        source: 'CoreEventBus',
+        ...context
+      });
+    }
+  }
+}
+```
+
+### Error Propagation
+```javascript
+async emit(eventName, data, options = {}) {
+  try {
+    // Event emission logic
+  } catch (error) {
+    await this.handleError(error, {
+      eventName,
+      data,
+      options
+    });
+    throw error;
+  }
+}
+```
+
+## Event Management
+
+### Event Structure
+```javascript
+const event = {
+  id: crypto.randomUUID(),
+  name: eventName,
+  data,
+  timestamp: new Date().toISOString(),
+  metadata: options.metadata || {}
+};
+```
+
+### Event Emission
+```javascript
+async emit(eventName, data, options = {}) {
+  const event = this.createEvent(eventName, data, options);
+  
+  // Store in history
+  this.trackEvent(event);
+
+  // Handle queuing if needed
+  if (options.queue) {
+    return this.queueEvent(event, options);
+  }
+
+  // Normal event emission
+  return super.emit(eventName, event);
+}
+```
+
+### Event History
+```javascript
+trackEvent(event) {
+  const history = this.history.get(event.name) || [];
+  history.unshift(event);
+
+  if (history.length > this.maxHistorySize) {
+    history.pop();
+  }
+
+  this.history.set(event.name, history);
+}
+```
+
+## Module Integration
+
+### Module Access
+```javascript
+class BusinessModule extends CoreModule {
+  constructor(deps) {
+    super(deps);
+    // Get eventBus from eventBusSystem
+    this.eventBus = deps.eventBusSystem.getEventBus();
+  }
+}
+```
+
+### Event Handling in Modules
+```javascript
+class BusinessModule extends CoreModule {
+  async setupEventHandlers() {
+    const eventBus = this.deps.eventBusSystem.getEventBus();
+    
+    // Subscribe to events
+    eventBus.subscribe('domain.event', this.handleDomainEvent.bind(this));
+    eventBus.subscribe('system.*', this.handleSystemEvents.bind(this));
+  }
+
+  async handleDomainEvent(event) {
+    try {
+      // Handle domain event
+    } catch (error) {
+      await this.handleError(error, { event });
+    }
+  }
+}
+```
+
+## Default Implementations
+
+### Factory Functions
+```javascript
+// EventBusSystem Factory
+export function createEventBusSystem(deps = {}) {
+  return new EventBusSystem(deps);
+}
+
+// CoreEventBus Factory for Testing/Development
+export function createEventBus(deps = {}) {
+  const defaultDeps = {
+    errorSystem: {
+      handleError: async () => {} // No-op error handler
+    },
+    config: {} // Empty configuration object
+  };
+
+  return new CoreEventBus({
+    ...defaultDeps,
+    ...deps
+  });
+}
+```
+
+### Default Module Integration
+```javascript
+// In Module Factory
+export function createModule(deps = {}) {
+  const defaultDeps = {
+    errorSystem: {
+      handleError: async () => {}
+    },
+    eventBusSystem: {
+      getEventBus: () => new CoreEventBus({
+        errorSystem: deps.errorSystem,
+        config: deps.config
+      })
+    },
+    config: {}
+  };
+
+  return new CoreModule({
+    ...defaultDeps,
+    ...deps
+  });
+}
+```
+
+## Testing Strategy
+
+### EventBus Testing
+```javascript
+describe('CoreEventBus', () => {
+  let eventBus;
+  let mockDeps;
+
+  beforeEach(() => {
+    mockDeps = {
+      errorSystem: {
+        handleError: jest.fn()
+      },
+      config: {}
+    };
+    eventBus = new CoreEventBus(mockDeps);
+  });
+
+  test('should emit events', async () => {
+    const handler = jest.fn();
+    eventBus.on('test.event', handler);
+    
+    await eventBus.emit('test.event', { data: 'test' });
+    expect(handler).toHaveBeenCalled();
+  });
+});
+```
+
+### System Testing
+```javascript
+describe('EventBusSystem', () => {
+  let system;
+  let mockDeps;
+
+  beforeEach(() => {
+    mockDeps = {
+      errorSystem: {
+        handleError: jest.fn()
+      },
+      config: {}
+    };
+    system = new EventBusSystem(mockDeps);
+  });
+
+  test('should initialize', async () => {
+    await system.initialize();
+    expect(system.initialized).toBe(true);
+    expect(system.getEventBus()).toBeDefined();
+  });
+});
+```
+
+## Best Practices
+
+1. Event Naming
+- Use domain-driven event names: `domain.action`
+- Include version for breaking changes: `user.created.v2`
+- Be specific and descriptive
+
+2. Event Handling
+- Always use try/catch in handlers
+- Validate event data
+- Keep handlers focused
+- Use proper error context
+
+3. Module Integration
+- Get eventBus through eventBusSystem
+- Setup handlers in setupEventHandlers
+- Clean up subscriptions on shutdown
+- Use proper error handling
+
+4. Testing
+- Use mock dependencies
+- Test both success and error cases
+- Verify event handling
+- Test lifecycle methods
+
+## Troubleshooting
+
+### Common Issues
+
+1. Event Bus Not Initialized
+```javascript
+// Check initialization
+if (!this.initialized) {
+  throw new CoreError('NOT_INITIALIZED', 'EventBusSystem is not initialized');
+}
+```
+
+2. Missing Dependencies
+```javascript
+// Validate dependencies
+const missing = this.constructor.dependencies.filter(
+  dep => !this.deps[dep]
+);
+
+if (missing.length > 0) {
+  throw new ModuleError(
+    'MISSING_DEPENDENCIES',
+    `Missing required dependencies: ${missing.join(', ')}`
+  );
+}
+```
+
+3. Event Handler Errors
+```javascript
+try {
+  await handler(event);
+} catch (error) {
+  await this.handleError(error, {
+    event,
+    handler: handler.name
+  });
+}
+```
+
+### Debugging Tips
+
+1. Enable Debug Logging
+```javascript
+const eventBus = this.deps.eventBusSystem.getEventBus();
+eventBus.on('*', (event) => {
+  console.debug('Event:', event);
+});
+```
+
+2. Check Event History
+```javascript
+const history = eventBus.getHistory(eventName);
+console.log('Event history:', history);
+```
+
+3. Monitor Health
+```javascript
+const health = await eventBus.checkHealth();
+console.log('EventBus health:', health);
+```
+
+
 // src/core/module/Module.js
 
 // src/core/module/Module.js
 import { EventEmitter } from 'events';
+import { CoreEventBus } from '../event/EventBus.js';
 import { ModuleError, ValidationError } from '../errors/index.js';
 
 export class CoreModule extends EventEmitter {
-  static dependencies = ['errorSystem', 'eventBus', 'config'];
+  static dependencies = ['errorSystem', 'eventBusSystem', 'config'];
   static version = '1.0.0';
   
   constructor(deps = {}) {
     super();
     this.deps = deps;
+    this.eventBus = deps.eventBusSystem?.getEventBus();
     this.initialized = false;
     this.config = deps.config || {};
     
@@ -2109,11 +2837,10 @@ export class CoreModule extends EventEmitter {
     }
 
     // Validate dependency interfaces
-    if (this.deps.eventBus && (typeof this.deps.eventBus.emit !== 'function' || 
-        typeof this.deps.eventBus.on !== 'function')) {
+    if (this.deps.eventBusSystem && typeof this.deps.eventBusSystem.getEventBus !== 'function') {
       throw new ModuleError(
-        'INVALID_EVENTBUS',
-        'EventBus missing required methods'
+        'INVALID_EVENTBUS_SYSTEM',
+        'EventBusSystem missing required methods'
       );
     }
 
@@ -2314,9 +3041,9 @@ export class CoreModule extends EventEmitter {
     const localEmitResult = super.emit(eventName, ...args);
 
     // Broadcast through eventBus if available
-    if (this.deps.eventBus?.emit) {
+    if (this.eventBus?.emit) {
       try {
-        await this.deps.eventBus.emit(eventName, ...args);
+        await this.eventBus.emit(eventName, ...args);
       } catch (error) {
         await this.handleError(error, {
           event: eventName,
@@ -2418,7 +3145,12 @@ export function createModule(deps = {}) {
     errorSystem: {
       handleError: async () => {} // No-op error handler
     },
-    eventBus: new EventEmitter(), // Default event emitter
+    eventBusSystem: {
+      getEventBus: () => new CoreEventBus({
+        errorSystem: deps.errorSystem,
+        config: deps.config
+      })
+    },
     config: {} // Empty configuration object
   };
 
@@ -2443,9 +3175,10 @@ export default {
 import { EventEmitter } from 'events';
 import { CoreModule } from './Module.js';
 import { ModuleError, ValidationError } from '../errors/index.js';
+import { CoreEventBus } from '../event/EventBus.js';
 
 export class ModuleSystem extends EventEmitter {
-  static dependencies = ['errorSystem', 'eventBus', 'config'];
+  static dependencies = ['errorSystem', 'eventBusSystem', 'config'];
 
   constructor(deps) {
     super();
@@ -2476,11 +3209,10 @@ export class ModuleSystem extends EventEmitter {
       );
     }
 
-    // Validate dependency interfaces
-    if (!this.deps.eventBus?.emit || !this.deps.eventBus?.on) {
+    if (!this.deps.eventBusSystem?.getEventBus) {
       throw new ModuleError(
-        'INVALID_EVENTBUS',
-        'EventBus missing required methods'
+        'INVALID_EVENTBUS_SYSTEM',
+        'EventBusSystem missing required methods'
       );
     }
 
@@ -2490,6 +3222,19 @@ export class ModuleSystem extends EventEmitter {
         'ErrorSystem missing required methods'
       );
     }
+  }
+
+  async emit(eventName, ...args) {
+    // Local EventEmitter emission
+    const localEmitResult = super.emit(eventName, ...args);
+    
+    // Use eventBusSystem for global events
+    if (this.deps.eventBusSystem) {
+      const eventBus = this.deps.eventBusSystem.getEventBus();
+      await eventBus.emit(eventName, ...args);
+    }
+    
+    return localEmitResult;
   }
 
   async register(name, ModuleClass, config = {}) {
@@ -2768,19 +3513,24 @@ export class ModuleSystem extends EventEmitter {
 }
 
 export function createModuleSystem(deps = {}) {
-    const defaultDeps = {
-      errorSystem: {
-        handleError: async () => {} // No-op error handler
-      },
-      eventBus: new EventEmitter(), // Default event emitter
-      config: {} // Empty configuration object
-    };
+  const defaultDeps = {
+    errorSystem: {
+      handleError: async () => {} // No-op error handler
+    },
+    eventBusSystem: {
+      getEventBus: () => new CoreEventBus({
+        errorSystem: deps.errorSystem,
+        config: deps.config
+      })
+    },
+    config: {} // Empty configuration object
+  };
   
-    return new ModuleSystem({
-      ...defaultDeps,
-      ...deps
-    });
-  }
+  return new ModuleSystem({
+    ...defaultDeps,
+    ...deps
+  });
+}
 
 export default {
   ModuleSystem,
@@ -2788,7 +3538,7 @@ export default {
 };
 
 
-// src/core/module/module-system-docs-updated.md
+// src/core/module/module-system-docs.md
 
 # Module System Documentation
 

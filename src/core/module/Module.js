@@ -2,7 +2,6 @@
 import { EventEmitter } from 'events';
 import { CoreEventBus } from '../event/EventBus.js';
 import { ModuleError, ValidationError } from '../errors/index.js';
-import { CoreEventBus } from '../event/EventBus.js';
 
 export class CoreModule extends EventEmitter {
   static dependencies = ['errorSystem', 'eventBusSystem', 'config'];
@@ -15,42 +14,33 @@ export class CoreModule extends EventEmitter {
     this.initialized = false;
     this.config = deps.config || {};
     
-    // Enhanced state tracking
+    // Simplified state tracking without health monitoring
     this.state = {
       status: 'created',
       startTime: null,
-      errors: [],
-      metrics: new Map(),
-      healthChecks: new Map(),
-      lastHealthCheck: null
+      errors: []
     };
-
-    // Validate dependencies immediately
-    this.validateDependencies();
     
-    // Set up health check interval
-    this.healthCheckInterval = null;
+    // Validate only core dependencies
+    this.validateCoreDependencies();
   }
 
-  validateDependencies() {
-    // Check required dependencies
-    const missing = this.constructor.dependencies.filter(
-      dep => !this.deps[dep]
-    );
+  // Only validate core system dependencies
+  validateCoreDependencies() {
+    const coreDeps = ['errorSystem', 'eventBusSystem', 'config'];
+    const missing = coreDeps.filter(dep => !this.deps[dep]);
 
     if (missing.length > 0) {
       throw new ModuleError(
-        'MISSING_DEPENDENCIES',
-        `Missing required dependencies: ${missing.join(', ')}`
+        'MISSING_CORE_DEPENDENCIES',
+        `Missing required core dependencies: ${missing.join(', ')}`
       );
     }
 
-    // Validate dependency interfaces
-    if (this.deps.eventBus && (typeof this.deps.eventBus.emit !== 'function' || 
-        typeof this.deps.eventBus.on !== 'function')) {
+    if (this.deps.eventBusSystem && typeof this.deps.eventBusSystem.getEventBus !== 'function') {
       throw new ModuleError(
-        'INVALID_EVENTBUS',
-        'EventBus missing required methods'
+        'INVALID_EVENTBUS_SYSTEM',
+        'EventBusSystem missing required methods'
       );
     }
 
@@ -103,13 +93,9 @@ export class CoreModule extends EventEmitter {
 
       // Setup phase
       await this.setupEventHandlers();
-      await this.setupHealthChecks();
 
       // Initialize phase
       await this.onInitialize();
-
-      // Start health check monitoring
-      this.startHealthChecks();
       
       this.initialized = true;
       this.state.status = 'running';
@@ -134,78 +120,6 @@ export class CoreModule extends EventEmitter {
         { originalError: error }
       );
     }
-  }
-
-  async setupHealthChecks() {
-    // Register default health checks
-    this.registerHealthCheck('state', async () => {
-      return {
-        status: this.state.status === 'running' ? 'healthy' : 'unhealthy',
-        uptime: Date.now() - this.state.startTime,
-        errorCount: this.state.errors.length
-      };
-    });
-
-    // Allow modules to add their own health checks
-    await this.onSetupHealthChecks();
-  }
-
-  registerHealthCheck(name, checkFn) {
-    if (typeof checkFn !== 'function') {
-      throw new ModuleError(
-        'INVALID_HEALTH_CHECK',
-        `Health check ${name} must be a function`
-      );
-    }
-    this.state.healthChecks.set(name, checkFn);
-  }
-
-  startHealthChecks() {
-    // Run health checks every 30 seconds by default
-    this.healthCheckInterval = setInterval(async () => {
-      try {
-        const health = await this.checkHealth();
-        this.state.lastHealthCheck = health;
-        
-        if (health.status !== 'healthy') {
-          await this.handleError(new ModuleError(
-            'HEALTH_CHECK_FAILED',
-            'Module health check failed',
-            { health }
-          ));
-        }
-      } catch (error) {
-        await this.handleError(error);
-      }
-    }, 30000);
-  }
-
-  async checkHealth() {
-    const results = {};
-    let overallStatus = 'healthy';
-
-    for (const [name, checkFn] of this.state.healthChecks) {
-      try {
-        results[name] = await checkFn();
-        if (results[name].status !== 'healthy') {
-          overallStatus = 'unhealthy';
-        }
-      } catch (error) {
-        results[name] = {
-          status: 'error',
-          error: error.message
-        };
-        overallStatus = 'unhealthy';
-      }
-    }
-
-    return {
-      name: this.constructor.name,
-      version: this.constructor.version,
-      status: overallStatus,
-      timestamp: new Date().toISOString(),
-      checks: results
-    };
   }
 
   async handleError(error, context = {}) {
@@ -251,9 +165,9 @@ export class CoreModule extends EventEmitter {
     const localEmitResult = super.emit(eventName, ...args);
 
     // Broadcast through eventBus if available
-    if (this.deps.eventBus?.emit) {
+    if (this.eventBus?.emit) {
       try {
-        await this.deps.eventBus.emit(eventName, ...args);
+        await this.eventBus.emit(eventName, ...args);
       } catch (error) {
         await this.handleError(error, {
           event: eventName,
@@ -273,12 +187,6 @@ export class CoreModule extends EventEmitter {
 
       this.state.status = 'shutting_down';
       
-      // Stop health checks
-      if (this.healthCheckInterval) {
-        clearInterval(this.healthCheckInterval);
-        this.healthCheckInterval = null;
-      }
-
       // Custom shutdown logic
       await this.onShutdown();
       
@@ -325,11 +233,6 @@ export class CoreModule extends EventEmitter {
     return Promise.resolve();
   }
 
-  async onSetupHealthChecks() {
-    // Override in derived classes
-    return Promise.resolve();
-  }
-
   async onInitialize() {
     // Override in derived classes
     return Promise.resolve();
@@ -339,15 +242,6 @@ export class CoreModule extends EventEmitter {
     // Override in derived classes
     return Promise.resolve();
   }
-
-  // Metrics tracking
-  recordMetric(name, value, tags = {}) {
-    this.state.metrics.set(name, {
-      value,
-      timestamp: Date.now(),
-      tags
-    });
-  }
 }
 
 export function createModule(deps = {}) {
@@ -356,7 +250,7 @@ export function createModule(deps = {}) {
       handleError: async () => {} // No-op error handler
     },
     eventBusSystem: {
-      getEventBus: () => new CoreEventBus({ // Use CoreEventBus instead of EventEmitter
+      getEventBus: () => new CoreEventBus({ 
         errorSystem: deps.errorSystem,
         config: deps.config
       })
