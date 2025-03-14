@@ -1,41 +1,44 @@
 // src/core/module/ModuleSystem.js
-
 import { EventEmitter } from 'events';
 import { CoreModule } from './Module.js';
 import { ModuleError, ValidationError } from '../errors/index.js';
-import { CoreEventBus } from '../event/EventBus.js';
 
 export class ModuleSystem extends EventEmitter {
   static dependencies = ['errorSystem', 'eventBusSystem', 'config'];
 
   constructor(deps) {
     super();
-    this.deps = deps || {};
+    this.deps = deps;
     this.modules = new Map();
     this.initialized = false;
-    
-    // Simplified state without health monitoring
+    // Get eventBus from eventBusSystem
+    this.eventBus = deps.eventBusSystem?.getEventBus();
     this.state = {
       status: 'created',
       startTime: null,
-      errors: []
+      errors: [],
+      metrics: new Map(),
+      moduleHealth: new Map(),
+      healthCheckIntervals: new Map() // Track intervals for proper cleanup
     };
 
-    // Validate core dependencies
-    this.validateCoreDependencies();
+    // Validate dependencies
+    this.validateDependencies();
   }
 
-  validateCoreDependencies() {
-    const coreDeps = ['errorSystem', 'eventBusSystem', 'config'];
-    const missing = coreDeps.filter(dep => !this.deps[dep]);
+  validateDependencies() {
+    const missing = this.constructor.dependencies.filter(
+      dep => !this.deps[dep]
+    );
 
     if (missing.length > 0) {
       throw new ModuleError(
-        'MISSING_CORE_DEPENDENCIES',
-        `Missing required core dependencies: ${missing.join(', ')}`
+        'MISSING_DEPENDENCIES',
+        `Missing required dependencies: ${missing.join(', ')}`
       );
     }
 
+    // Validate eventBusSystem
     if (!this.deps.eventBusSystem?.getEventBus) {
       throw new ModuleError(
         'INVALID_EVENTBUS_SYSTEM',
@@ -55,10 +58,13 @@ export class ModuleSystem extends EventEmitter {
     // Local EventEmitter emission
     const localEmitResult = super.emit(eventName, ...args);
     
-    // Use eventBusSystem for global events
-    if (this.deps.eventBusSystem) {
-      const eventBus = this.deps.eventBusSystem.getEventBus();
-      await eventBus.emit(eventName, ...args);
+    // Use eventBus for global events if available
+    if (this.eventBus?.emit) {
+      try {
+        await this.eventBus.emit(eventName, ...args);
+      } catch (error) {
+        await this.handleModuleError('ModuleSystem', error);
+      }
     }
     
     return localEmitResult;
@@ -80,10 +86,9 @@ export class ModuleSystem extends EventEmitter {
     }
 
     try {
-      // Create the module with just the core dependencies
+      // Create module instance with dependencies
       const module = new ModuleClass({
-        errorSystem: this.deps.errorSystem,
-        eventBusSystem: this.deps.eventBusSystem,
+        ...this.deps,
         config: {
           ...this.deps.config?.[name],
           ...config
@@ -92,9 +97,9 @@ export class ModuleSystem extends EventEmitter {
 
       this.modules.set(name, module);
 
-      // Setup error listener
-      module.on('module:error', async (errorData) => {
-        await this.handleModuleError(name, errorData.error);
+      // Setup health check listener
+      module.on('module:error', async (error) => {
+        await this.handleModuleError(name, error);
       });
 
       await this.emit('module:registered', {
@@ -159,16 +164,15 @@ export class ModuleSystem extends EventEmitter {
       this.state.startTime = Date.now();
       this.state.status = 'initializing';
 
-      // Connect module dependencies
-      await this.wireModuleDependencies();
-      
-      // Check for circular dependencies
+      // Initialize modules in dependency order
       const initOrder = this.resolveDependencyOrder();
       
-      // Initialize modules in the correct order
       for (const name of initOrder) {
         const module = this.modules.get(name);
         await module.initialize();
+        
+        // Start monitoring module health
+        await this.startModuleHealthMonitoring(name);
       }
 
       this.initialized = true;
@@ -189,27 +193,6 @@ export class ModuleSystem extends EventEmitter {
     }
   }
 
-  async wireModuleDependencies() {
-    // For each module, inject its module dependencies
-    for (const [name, module] of this.modules.entries()) {
-      const deps = module.constructor.dependencies || [];
-      
-      // For each dependency that's another module
-      for (const dep of deps) {
-        // Skip core dependencies
-        if (dep === 'errorSystem' || dep === 'eventBusSystem' || dep === 'config') {
-          continue;
-        }
-        
-        // Check if dependency is a registered module
-        if (this.modules.has(dep)) {
-          // Inject the module reference
-          module.deps[dep] = this.modules.get(dep);
-        }
-      }
-    }
-  }
-
   resolveDependencyOrder() {
     const visited = new Set();
     const visiting = new Set();
@@ -217,8 +200,6 @@ export class ModuleSystem extends EventEmitter {
 
     const visit = (name) => {
       if (visited.has(name)) return;
-      
-      // Detect circular dependencies
       if (visiting.has(name)) {
         throw new ModuleError(
           'CIRCULAR_DEPENDENCY',
@@ -231,22 +212,13 @@ export class ModuleSystem extends EventEmitter {
       const module = this.modules.get(name);
       const deps = module.constructor.dependencies || [];
 
-      // Check module dependencies
       for (const dep of deps) {
-        // Skip core dependencies
-        if (dep === 'errorSystem' || dep === 'eventBusSystem' || dep === 'config') {
-          continue;
-        }
-        
-        // Check if module dependency exists
         if (!this.modules.has(dep)) {
           throw new ModuleError(
             'MISSING_DEPENDENCY',
             `Module ${name} requires missing module: ${dep}`
           );
         }
-        
-        // Recursively visit dependencies
         visit(dep);
       }
 
@@ -255,12 +227,42 @@ export class ModuleSystem extends EventEmitter {
       order.push(name);
     };
 
-    // Visit all modules to build dependency order
     for (const name of this.modules.keys()) {
       visit(name);
     }
 
     return order;
+  }
+
+  async startModuleHealthMonitoring(name) {
+    const module = this.modules.get(name);
+    if (!module) return;
+
+    // Clear any existing interval
+    if (this.state.healthCheckIntervals.has(name)) {
+      clearInterval(this.state.healthCheckIntervals.get(name));
+    }
+
+    // Monitor module health status
+    const intervalId = setInterval(async () => {
+      try {
+        const health = await module.checkHealth();
+        this.state.moduleHealth.set(name, health);
+
+        if (health.status !== 'healthy') {
+          await this.handleModuleError(name, new ModuleError(
+            'UNHEALTHY_MODULE',
+            `Module ${name} is unhealthy`,
+            { health }
+          ));
+        }
+      } catch (error) {
+        await this.handleModuleError(name, error);
+      }
+    }, 60000); // Check every minute
+
+    // Track the interval for proper cleanup
+    this.state.healthCheckIntervals.set(name, intervalId);
   }
 
   async handleModuleError(moduleName, error) {
@@ -276,10 +278,12 @@ export class ModuleSystem extends EventEmitter {
     }
 
     // Forward to error system
-    await this.deps.errorSystem.handleError(error, {
-      source: 'ModuleSystem',
-      module: moduleName
-    });
+    if (this.deps.errorSystem?.handleError) {
+      await this.deps.errorSystem.handleError(error, {
+        source: 'ModuleSystem',
+        module: moduleName
+      });
+    }
 
     await this.emit('module:error', {
       module: moduleName,
@@ -288,11 +292,47 @@ export class ModuleSystem extends EventEmitter {
     });
   }
 
+  async getSystemHealth() {
+    const moduleHealth = {};
+    let systemStatus = 'healthy';
+
+    for (const [name, module] of this.modules) {
+      try {
+        const health = await module.checkHealth();
+        moduleHealth[name] = health;
+        
+        if (health.status !== 'healthy') {
+          systemStatus = 'degraded';
+        }
+      } catch (error) {
+        moduleHealth[name] = {
+          status: 'error',
+          error: error.message
+        };
+        systemStatus = 'unhealthy';
+      }
+    }
+
+    return {
+      status: systemStatus,
+      timestamp: new Date().toISOString(),
+      uptime: Date.now() - this.state.startTime,
+      modules: moduleHealth,
+      errorCount: this.state.errors.length
+    };
+  }
+
   async shutdown() {
     if (!this.initialized) return;
 
     try {
       this.state.status = 'shutting_down';
+
+      // Clear all health check intervals
+      for (const [name, intervalId] of this.state.healthCheckIntervals) {
+        clearInterval(intervalId);
+      }
+      this.state.healthCheckIntervals.clear();
 
       // Shutdown modules in reverse dependency order
       const shutdownOrder = this.resolveDependencyOrder().reverse();
@@ -327,14 +367,11 @@ export function createModuleSystem(deps = {}) {
       handleError: async () => {} // No-op error handler
     },
     eventBusSystem: {
-      getEventBus: () => new CoreEventBus({
-        errorSystem: deps.errorSystem, 
-        config: deps.config
-      })
+      getEventBus: () => new EventEmitter() // Default eventBus provider
     },
     config: {} // Empty configuration object
   };
-  
+
   return new ModuleSystem({
     ...defaultDeps,
     ...deps
