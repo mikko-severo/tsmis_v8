@@ -3438,26 +3438,82 @@ export class ModuleSystem extends EventEmitter {
     this.state.healthCheckIntervals.set(name, intervalId);
   }
 
+  // async handleModuleError(moduleName, error) {
+  //   this.state.errors.push({
+  //     timestamp: new Date().toISOString(),
+  //     module: moduleName,
+  //     error: error.message
+  //   });
+
+  //   // Trim error history
+  //   if (this.state.errors.length > 100) {
+  //     this.state.errors.shift();
+  //   }
+
+  //   // Forward to error system
+  //   try {
+  //     if (this.deps.errorSystem?.handleError) {
+  //       await this.deps.errorSystem.handleError(error, {
+  //         source: 'ModuleSystem',
+  //         module: moduleName
+  //       });
+  //     }
+  //   } catch (handlerError) {
+  //     // Log the error from the error system but don't rethrow
+  //     console.error('Error in error handling:', handlerError);
+  //   }
+  //   await this.emit('module:error', {
+  //     module: moduleName,
+  //     error,
+  //     timestamp: new Date().toISOString()
+  //   });
+  // }
+
   async handleModuleError(moduleName, error) {
     this.state.errors.push({
       timestamp: new Date().toISOString(),
       module: moduleName,
       error: error.message
     });
-
+  
     // Trim error history
     if (this.state.errors.length > 100) {
       this.state.errors.shift();
     }
-
-    // Forward to error system
-    if (this.deps.errorSystem?.handleError) {
-      await this.deps.errorSystem.handleError(error, {
-        source: 'ModuleSystem',
-        module: moduleName
-      });
+  
+    // Defensive error handling for error system
+    if (this.deps.errorSystem && typeof this.deps.errorSystem.handleError === 'function') {
+      try {
+        // Carefully forward error to error system with context
+        await this.deps.errorSystem.handleError(error, {
+          source: 'ModuleSystem',
+          module: moduleName,
+          timestamp: new Date().toISOString()
+        });
+      } catch (handlerError) {
+        // Fallback logging mechanism
+        const fallbackErrorLog = {
+          timestamp: new Date().toISOString(),
+          source: 'ModuleSystem',
+          originalError: error.message,
+          handlerError: handlerError.message,
+          module: moduleName
+        };
+  
+        // Use a robust logging mechanism
+        if (typeof console.error === 'function') {
+          console.error('Error System Failure:', JSON.stringify(fallbackErrorLog, null, 2));
+        }
+  
+        // Optional: Add to local error tracking if error system fails
+        this.state.errors.push({
+          ...fallbackErrorLog,
+          type: 'HANDLER_FAILURE'
+        });
+      }
     }
-
+  
+    // Emit error event regardless of error system status
     await this.emit('module:error', {
       module: moduleName,
       error,
