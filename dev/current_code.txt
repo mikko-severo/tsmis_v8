@@ -2802,6 +2802,7 @@ export class CoreModule extends EventEmitter {
   constructor(deps = {}) {
     super();
     this.deps = deps;
+    // Get the eventBus from eventBusSystem
     this.eventBus = deps.eventBusSystem?.getEventBus();
     this.initialized = false;
     this.config = deps.config || {};
@@ -2836,11 +2837,11 @@ export class CoreModule extends EventEmitter {
       );
     }
 
-    // Validate dependency interfaces
+    // Validate eventBusSystem dependency
     if (this.deps.eventBusSystem && typeof this.deps.eventBusSystem.getEventBus !== 'function') {
       throw new ModuleError(
         'INVALID_EVENTBUS_SYSTEM',
-        'EventBusSystem missing required methods'
+        'EventBusSystem missing required method: getEventBus'
       );
     }
 
@@ -3146,7 +3147,7 @@ export function createModule(deps = {}) {
       handleError: async () => {} // No-op error handler
     },
     eventBusSystem: {
-      getEventBus: () => new CoreEventBus({
+      getEventBus: () => new CoreEventBus({ // Use CoreEventBus instead of EventEmitter
         errorSystem: deps.errorSystem,
         config: deps.config
       })
@@ -3171,11 +3172,9 @@ export default {
 // src/core/module/ModuleSystem.js
 
 // src/core/module/ModuleSystem.js
-
 import { EventEmitter } from 'events';
 import { CoreModule } from './Module.js';
 import { ModuleError, ValidationError } from '../errors/index.js';
-import { CoreEventBus } from '../event/EventBus.js';
 
 export class ModuleSystem extends EventEmitter {
   static dependencies = ['errorSystem', 'eventBusSystem', 'config'];
@@ -3185,12 +3184,15 @@ export class ModuleSystem extends EventEmitter {
     this.deps = deps;
     this.modules = new Map();
     this.initialized = false;
+    // Get eventBus from eventBusSystem
+    this.eventBus = deps.eventBusSystem?.getEventBus();
     this.state = {
       status: 'created',
       startTime: null,
       errors: [],
       metrics: new Map(),
-      moduleHealth: new Map()
+      moduleHealth: new Map(),
+      healthCheckIntervals: new Map() // Track intervals for proper cleanup
     };
 
     // Validate dependencies
@@ -3209,6 +3211,7 @@ export class ModuleSystem extends EventEmitter {
       );
     }
 
+    // Validate eventBusSystem
     if (!this.deps.eventBusSystem?.getEventBus) {
       throw new ModuleError(
         'INVALID_EVENTBUS_SYSTEM',
@@ -3228,10 +3231,13 @@ export class ModuleSystem extends EventEmitter {
     // Local EventEmitter emission
     const localEmitResult = super.emit(eventName, ...args);
     
-    // Use eventBusSystem for global events
-    if (this.deps.eventBusSystem) {
-      const eventBus = this.deps.eventBusSystem.getEventBus();
-      await eventBus.emit(eventName, ...args);
+    // Use eventBus for global events if available
+    if (this.eventBus?.emit) {
+      try {
+        await this.eventBus.emit(eventName, ...args);
+      } catch (error) {
+        await this.handleModuleError('ModuleSystem', error);
+      }
     }
     
     return localEmitResult;
@@ -3405,8 +3411,13 @@ export class ModuleSystem extends EventEmitter {
     const module = this.modules.get(name);
     if (!module) return;
 
+    // Clear any existing interval
+    if (this.state.healthCheckIntervals.has(name)) {
+      clearInterval(this.state.healthCheckIntervals.get(name));
+    }
+
     // Monitor module health status
-    setInterval(async () => {
+    const intervalId = setInterval(async () => {
       try {
         const health = await module.checkHealth();
         this.state.moduleHealth.set(name, health);
@@ -3422,6 +3433,9 @@ export class ModuleSystem extends EventEmitter {
         await this.handleModuleError(name, error);
       }
     }, 60000); // Check every minute
+
+    // Track the interval for proper cleanup
+    this.state.healthCheckIntervals.set(name, intervalId);
   }
 
   async handleModuleError(moduleName, error) {
@@ -3437,10 +3451,12 @@ export class ModuleSystem extends EventEmitter {
     }
 
     // Forward to error system
-    await this.deps.errorSystem.handleError(error, {
-      source: 'ModuleSystem',
-      module: moduleName
-    });
+    if (this.deps.errorSystem?.handleError) {
+      await this.deps.errorSystem.handleError(error, {
+        source: 'ModuleSystem',
+        module: moduleName
+      });
+    }
 
     await this.emit('module:error', {
       module: moduleName,
@@ -3485,6 +3501,12 @@ export class ModuleSystem extends EventEmitter {
     try {
       this.state.status = 'shutting_down';
 
+      // Clear all health check intervals
+      for (const [name, intervalId] of this.state.healthCheckIntervals) {
+        clearInterval(intervalId);
+      }
+      this.state.healthCheckIntervals.clear();
+
       // Shutdown modules in reverse dependency order
       const shutdownOrder = this.resolveDependencyOrder().reverse();
 
@@ -3518,14 +3540,11 @@ export function createModuleSystem(deps = {}) {
       handleError: async () => {} // No-op error handler
     },
     eventBusSystem: {
-      getEventBus: () => new CoreEventBus({
-        errorSystem: deps.errorSystem,
-        config: deps.config
-      })
+      getEventBus: () => new EventEmitter() // Default eventBus provider
     },
     config: {} // Empty configuration object
   };
-  
+
   return new ModuleSystem({
     ...defaultDeps,
     ...deps
