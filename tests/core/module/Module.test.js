@@ -6,27 +6,16 @@ import { EventEmitter } from "events";
 /**
  * TESTS
  * 
- * The tests are organized into the following sections:
- * - Basic Functionality
- *   - Tests for constructor, initialization, and basic methods
- * - Dependency Validation
- *   - Tests for dependency validation logic
- * - Configuration Validation
- *   - Tests for validateConfig and related methods
- * - Lifecycle Methods
- *   - Tests for lifecycle hooks (onConfigure, onInitialize, etc.)
- * - Health Monitoring
- *   - Tests for health check registration and execution
- * - Error Handling
- *   - Tests for error handling functionality
- * - Event Emission
- *   - Tests for event emission through both local and event bus
- * - Metrics Recording
- *   - Tests for metrics tracking functionality
- * - Shutdown Process
- *   - Tests for shutdown logic and error handling
- * - Factory Function
- *   - Tests for createModule factory function
+ * - Basic Functionality: Tests for constructor, initialization, and basic methods.
+ * - Dependency Validation: Tests for dependency validation logic.
+ * - Configuration Validation: Tests for validateConfig and related methods.
+ * - Lifecycle Methods: Tests for lifecycle hooks (onConfigure, onInitialize, etc.).
+ * - Health Monitoring: Tests for health check registration and execution.
+ * - Error Handling: Tests for error handling functionality.
+ * - Event Emission: Tests for event emission through both local and event bus.
+ * - Metrics Recording: Tests for metrics tracking functionality.
+ * - Shutdown Process: Tests for shutdown logic and error handling.
+ * - Factory Function: Tests for createModule factory function.
  */
 
 

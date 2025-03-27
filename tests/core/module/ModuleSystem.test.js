@@ -3,27 +3,16 @@
 /**
  * TESTS
  * 
- * The tests are organized into the following sections:
- * - Basic Functionality
- * -- Tests for basic methods like register, resolve, unregister
- * - Dependency Validation
- * -- Tests for dependency validation logic
- * - Registration
- * -- Tests for module registration and unregistration
- * - Event Emission
- * -- Tests for event emission functionality
- * - Dependency Resolution
- * -- Tests for dependency resolution logic
- * - Error Handling
- * -- Tests for error handling, including console.error fallback
- * - Initialization
- * -- Tests for system initialization process
- * - Health Monitoring
- * -- Tests for health monitoring functionality
- * - Shutdown
- * -- Tests for system shutdown process
- * - Factory Function
- * -- Tests for factory function
+ * - Basic Functionality: Tests for basic methods like register, resolve, unregister.
+ * - Dependency Validation: Tests for dependency validation logic.
+ * - Registration: Tests for module registration and unregistration.
+ * - Event Emission: Tests for event emission functionality.
+ * - Dependency Resolution: Tests for dependency resolution logic.
+ * - Error Handling: Tests for error handling, including console.error fallback.
+ * - Initialization: Tests for system initialization process.
+ * - Health Monitoring: Tests for health monitoring functionality.
+ * - Shutdown: Tests for system shutdown process.
+ * - Factory Function: Tests for factory function.
  */
 
 
